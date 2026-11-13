@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#714B67" />
+  <title>البوفية — إدارة النقدية</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <!-- شاشة الدخول -->
+  <section id="login" class="login hidden">
+    <form class="login-card" id="loginForm" autocomplete="on">
+      <div class="login-logo">☕</div>
+      <h1 id="loginTitle">البوفية</h1>
+      <p class="muted">إدارة الإيرادات والمصروفات وحركة النقدية</p>
+      <label>البريد الإلكتروني<input type="email" name="email" required autocomplete="username" /></label>
+      <label>كلمة المرور<input type="password" name="password" required autocomplete="current-password" /></label>
+      <button class="btn btn-primary btn-block" type="submit">تسجيل الدخول</button>
+      <p class="login-err" id="loginErr"></p>
+    </form>
+  </section>
+
+  <!-- التطبيق -->
+  <div id="app" class="hidden">
+    <header class="navbar">
+      <button class="nav-burger" id="burger" aria-label="القائمة">☰</button>
+      <a class="nav-brand" href="#/dashboard"><span class="brand-icon">☕</span><span id="brandName">البوفية</span></a>
+      <nav class="nav-menu" id="navMenu">
+        <a href="#/dashboard" data-nav="dashboard">لوحة المتابعة</a>
+        <a href="#/transactions" data-nav="transactions">الحركات</a>
+        <a href="#/closing" data-nav="closing">الإقفال اليومي</a>
+        <a href="#/reports/statement" data-nav="reports">التقارير</a>
+        <div class="nav-dd">
+          <button type="button" data-nav="settings">الإعدادات ▾</button>
+          <div class="nav-dd-menu">
+            <a href="#/categories">البنود</a>
+            <a href="#/users">المستخدمون والصلاحيات</a>
+          </div>
+        </div>
+      </nav>
+      <div class="nav-user">
+        <button class="avatar-btn" id="userBtn" type="button"><span class="avatar" id="userAvatar">م</span><span class="user-name" id="userName"></span></button>
+        <div class="user-menu" id="userMenu">
+          <div class="user-menu-head"><b id="umName"></b><small id="umRole"></small></div>
+          <a href="#/users">حسابي</a>
+          <button type="button" id="logoutBtn">تسجيل الخروج</button>
+        </div>
+      </div>
+    </header>
+    <div id="demoBanner" class="demo-banner hidden">وضع تجريبي — البيانات محفوظة في هذا المتصفح فقط. اربط Supabase في ملف <code>config.js</code> للمشاركة.</div>
+    <div class="control-panel" id="cp"></div>
+    <main id="main" class="main"></main>
+    <a class="fab" href="#/new" id="fab" title="حركة جديدة">＋</a>
+  </div>
+
+  <div id="toast" class="toast"></div>
+  <div id="modal" class="modal hidden"><div class="modal-card" id="modalCard"></div></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <script src="config.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
