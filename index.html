@@ -2,13 +2,20 @@
 <html lang="ar" dir="rtl">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
   <meta name="theme-color" content="#714B67" />
   <title>البوفية — إدارة النقدية</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="style.css" />
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="icon" type="image/png" href="icon-192.png" />
+  <link rel="apple-touch-icon" href="icon-192.png" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <meta name="apple-mobile-web-app-title" content="البوفية" />
 </head>
 <body>
   <!-- شاشة الدخول -->
@@ -65,5 +72,24 @@
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <script src="config.js"></script>
   <script src="app.js"></script>
+  <!-- تثبيت التطبيق (PWA) -->
+  <button id="installBtn" type="button" class="hidden" style="position:fixed;bottom:18px;right:18px;z-index:40;background:#017E84;color:#fff;border:0;padding:10px 18px;border-radius:24px;font:inherit;font-weight:600;box-shadow:0 4px 14px rgba(0,0,0,.25);cursor:pointer">⬇ تثبيت التطبيق</button>
+  <div id="iosHint" class="hidden" style="position:fixed;bottom:0;left:0;right:0;z-index:45;background:#1f2937;color:#fff;padding:14px 16px;font-size:14px;text-align:center;line-height:1.7">
+    لتثبيت التطبيق على الآيفون: اضغط زر المشاركة <b>⎋</b> في Safari ثم <b>«إضافة إلى الشاشة الرئيسية»</b>
+    <button type="button" onclick="this.parentElement.classList.add('hidden');try{localStorage.setItem('iosHintSeen','1')}catch(e){}" style="margin-right:10px;background:#714B67;color:#fff;border:0;border-radius:6px;padding:4px 12px;font:inherit">حسناً</button>
+  </div>
+  <script>
+  (function(){
+    if ('serviceWorker' in navigator) window.addEventListener('load', function(){ navigator.serviceWorker.register('sw.js'); });
+    var standalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
+    var btn = document.getElementById('installBtn'), deferred = null;
+    window.addEventListener('beforeinstallprompt', function(e){ e.preventDefault(); deferred = e; if (!standalone) btn.classList.remove('hidden'); });
+    btn.onclick = function(){ if (!deferred) return; deferred.prompt(); deferred.userChoice.finally(function(){ deferred = null; btn.classList.add('hidden'); }); };
+    window.addEventListener('appinstalled', function(){ btn.classList.add('hidden'); });
+    var ios = /iphone|ipad|ipod/i.test(navigator.userAgent);
+    var seen = false; try { seen = localStorage.getItem('iosHintSeen') === '1'; } catch(e){}
+    if (ios && !standalone && !seen) document.getElementById('iosHint').classList.remove('hidden');
+  })();
+  </script>
 </body>
 </html>
