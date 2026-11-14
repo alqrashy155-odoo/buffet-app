@@ -94,6 +94,7 @@ function supaDB() {
     async signIn(email, password) { const { data, error } = await sb.auth.signInWithPassword({ email, password }); if (error) throw error; return data.user; },
     async signOut() { await sb.auth.signOut(); },
     async changePassword(pw) { const { error } = await sb.auth.updateUser({ password: pw }); if (error) throw error; },
+    async adminSetPassword(id, pw) { const { error } = await sb.rpc('admin_set_password', { target: id, new_password: pw }); if (error) throw error; },
     profiles: () => all('profiles', 'created_at'),
     categories: () => all('categories', 'sort'),
     transactions: () => all('transactions', 'tx_date'),
@@ -133,6 +134,7 @@ function demoDB() {
     async signIn() { sessionStorage.setItem('demo_in', '1'); return ME; },
     async signOut() { sessionStorage.removeItem('demo_in'); },
     async changePassword() {},
+    async adminSetPassword() {},
     async profiles() { return clone(st.profiles); },
     async categories() { return clone(st.categories).sort((a, b) => a.sort - b.sort || a.id - b.id); },
     async transactions() { return clone(st.transactions).sort((a, b) => a.tx_date.localeCompare(b.tx_date) || a.id - b.id); },
@@ -919,7 +921,7 @@ function viewUsers() {
         : `<span class="badge ${p.role === 'admin' ? 'b-purple' : 'b-gray'}">${p.role === 'admin' ? 'مدير' : 'مستخدم'}</span>`}</td>
       ${Object.keys(PERMS).map(k => `<td style="text-align:center">${tog(p, k, dis)}</td>`).join('')}
       <td class="num hide-m">${count(p.id)}</td>
-      ${admin ? '<td><button class="btn btn-primary btn-sm" data-save>حفظ</button></td>' : ''}</tr>`; }).join('')}</tbody></table></div>`);
+      ${admin ? `<td style="white-space:nowrap"><button class="btn btn-primary btn-sm" data-save>حفظ</button>${self ? '' : ' <button class="btn btn-secondary btn-sm" data-pw title="تعيين كلمة مرور جديدة">🔑 كلمة المرور</button>'}</td>` : ''}</tr>`; }).join('')}</tbody></table></div>`);
 
   $('#myNameSave').onclick = async () => {
     const n = $('#myName').value.trim(); if (!n) return;
@@ -930,6 +932,25 @@ function viewUsers() {
     try { await DB.changePassword(pw); $('#myPw').value = ''; toast('تم تغيير كلمة المرور ✓', 'ok'); } catch (e) { toast(errMsg(e), 'err'); }
   };
   if (!admin) return;
+  $$('[data-pw]').forEach(btn => btn.onclick = () => {
+    const p = S.profiles.find(x => x.id === btn.closest('tr').dataset.pid);
+    $('#modalCard').innerHTML = `<div class="m-h">تعيين كلمة مرور — ${esc(p.full_name)}</div><div class="m-b">
+      <label>كلمة المرور الجديدة<input type="password" id="pw1" autocomplete="new-password" style="width:100%;margin-top:4px" placeholder="6 أحرف على الأقل" /></label>
+      <label style="margin-top:10px">تأكيد كلمة المرور<input type="password" id="pw2" autocomplete="new-password" style="width:100%;margin-top:4px" /></label>
+      <label style="margin-top:10px;display:flex;align-items:center;gap:6px;font-size:13px"><input type="checkbox" id="pwShow" /> إظهار كلمة المرور</label>
+      <p class="muted" style="font-size:12px;margin:10px 0 0">أرسلها للمستخدم، ويستطيع تغييرها بعد الدخول من «حسابي».</p></div>
+      <div class="m-f"><button class="btn btn-primary" id="pwOk">حفظ كلمة المرور</button><button class="btn btn-secondary" id="pwNo">إلغاء</button></div>`;
+    $('#modal').classList.remove('hidden'); $('#pw1').focus();
+    $('#pwShow').onchange = e => { $('#pw1').type = $('#pw2').type = e.target.checked ? 'text' : 'password'; };
+    $('#pwNo').onclick = () => $('#modal').classList.add('hidden');
+    $('#pwOk').onclick = async () => {
+      const a = $('#pw1').value, b = $('#pw2').value;
+      if (a.length < 6) { toast('كلمة المرور قصيرة (6 أحرف على الأقل)', 'err'); return; }
+      if (a !== b) { toast('كلمتا المرور غير متطابقتين', 'err'); return; }
+      try { $('#pwOk').disabled = true; await DB.adminSetPassword(p.id, a); $('#modal').classList.add('hidden'); toast(`تم تعيين كلمة مرور ${p.full_name} ✓`, 'ok'); }
+      catch (e) { $('#pwOk').disabled = false; toast(errMsg(e), 'err'); }
+    };
+  });
   $$('tr[data-pid]').forEach(tr => {
     const roleSel = $('[data-f=role]', tr);
     // عند اختيار "مدير" تُفعَّل كل الصلاحيات تلقائياً وتُقفل
@@ -988,6 +1009,8 @@ function boot() {
   });
   $('#userMenu').addEventListener('click', e => { if (e.target.closest('a')) $('#userMenu').classList.remove('open'); });
   $('#logoutBtn').onclick = async () => { await DB.signOut(); S.user = null; location.hash = ''; showLogin(); };
+  $('#loginErr').insertAdjacentHTML('beforebegin', '<button type="button" class="btn btn-link" id="forgotBtn" style="margin-top:8px">نسيت كلمة المرور؟</button><p id="forgotMsg" class="muted hidden" style="font-size:13px;line-height:1.8;margin:6px 0 0">تواصل مع مدير التطبيق، ويستطيع تعيين كلمة مرور جديدة لك من «الإعدادات ← المستخدمون والصلاحيات ← 🔑 كلمة المرور».</p>');
+  $('#forgotBtn').onclick = () => $('#forgotMsg').classList.toggle('hidden');
   $('#loginForm').onsubmit = async e => {
     e.preventDefault();
     const f = e.target, btn = $('button', f);

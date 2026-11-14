@@ -179,3 +179,16 @@ alter table public.transactions add constraint transactions_tx_type_check
 alter table public.transactions drop constraint if exists transactions_journal_check;
 alter table public.transactions add constraint transactions_journal_check
   check (tx_type <> 'journal' or (category_id is not null and credit_category_id is not null and category_id <> credit_category_id));
+
+
+-- ===== تحديث: تعيين كلمة مرور مستخدم بواسطة المدير =====
+create or replace function public.admin_set_password(target uuid, new_password text)
+returns void language plpgsql security definer set search_path = public, extensions, auth as $$
+begin
+  if not public.is_admin() then raise exception 'NO_PERMISSION'; end if;
+  if length(coalesce(new_password, '')) < 6 then raise exception 'كلمة المرور قصيرة (6 أحرف على الأقل)'; end if;
+  update auth.users set encrypted_password = extensions.crypt(new_password, extensions.gen_salt('bf')), updated_at = now() where id = target;
+  if not found then raise exception 'المستخدم غير موجود'; end if;
+end $$;
+revoke all on function public.admin_set_password(uuid, text) from public, anon;
+grant execute on function public.admin_set_password(uuid, text) to authenticated;
