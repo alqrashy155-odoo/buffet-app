@@ -253,3 +253,6 @@ table.list{width:100%;border-collapse:collapse}
 /* نوع «قبض من حساب» */
 .b-teal{background:#e0f2f1;color:#017E84} .bd-teal{border-right-color:#017E84}
 .statusbar button.on.t-teal{background:#017E84}
+/* توسيع خانة اسم البند لتظهر الأسماء كاملة */
+.list td input[data-f="name"]{min-width:260px;field-sizing:content;font-weight:500}
+@media (max-width:760px){.list td input[data-f="name"]{min-width:200px}}
