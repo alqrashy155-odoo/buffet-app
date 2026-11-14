@@ -248,3 +248,8 @@ table.list{width:100%;border-collapse:collapse}
   .list th{position:static}
   .card{box-shadow:none;border:0}
 }
+
+
+/* نوع «قبض من حساب» */
+.b-teal{background:#e0f2f1;color:#017E84} .bd-teal{border-right-color:#017E84}
+.statusbar button.on.t-teal{background:#017E84}

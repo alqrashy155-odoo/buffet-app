@@ -68,7 +68,7 @@ $$;
 create table if not exists public.categories (
   id          bigint generated always as identity primary key,
   name        text not null,
-  kind        text not null check (kind in ('income','expense')),
+  kind        text not null check (kind in ('income','expense','account')),
   active      boolean not null default true,
   sort        int not null default 100,
   created_at  timestamptz not null default now()
@@ -97,7 +97,7 @@ where not exists (select 1 from public.categories);
 create table if not exists public.transactions (
   id           bigint generated always as identity primary key,
   tx_date      date not null default current_date,
-  tx_type      text not null check (tx_type in ('sale','expense','withdrawal','adj_plus','adj_minus','opening')),
+  tx_type      text not null check (tx_type in ('sale','expense','withdrawal','adj_plus','adj_minus','opening','receipt')),
   category_id  bigint references public.categories(id) on delete restrict,
   amount       numeric(12,2) not null check (amount > 0),
   note         text not null default '',

@@ -18,8 +18,13 @@ const TYPES = {
   adj_plus:   { label: 'تسوية +',        sign:  1, cat: null,      color: 'blue'   },
   adj_minus:  { label: 'تسوية −',        sign: -1, cat: null,      color: 'purple' },
   opening:    { label: 'رصيد افتتاحي',   sign:  1, cat: null,      color: 'gray'   },
+  receipt:    { label: 'قبض من حساب',    sign:  1, cat: 'account', color: 'teal'   },
 };
 const TYPE_KEYS = Object.keys(TYPES);
+// أنواع البنود الاختيارية لكل حركة
+const OPTK = { withdrawal: ['account'], adj_plus: ['expense', 'income', 'account'], adj_minus: ['expense', 'income', 'account'] };
+const KIND_LABEL = { income: 'إيراد', expense: 'مصروف', account: 'حساب' };
+const KIND_ORDER = { income: 0, expense: 1, account: 2 };
 const MONTHS = ['يناير','فبراير','مارس','أبريل','مايو','يونيو','يوليو','أغسطس','سبتمبر','أكتوبر','نوفمبر','ديسمبر'];
 const CLOSING_TAG = 'فرق جرد';
 
@@ -451,7 +456,8 @@ function viewForm(id, presetType) {
     if (T.cat && !S.cats.some(c => c.id === rec.category_id && c.kind === T.cat)) {
       const first = S.cats.find(c => c.kind === T.cat && c.active); rec.category_id = first ? first.id : null;
     }
-    if (!T.cat && !rec.tx_type.startsWith('adj')) rec.category_id = null;
+    if (!T.cat && !OPTK[rec.tx_type]) rec.category_id = null;
+    if (OPTK[rec.tx_type] && rec.category_id && !OPTK[rec.tx_type].includes(catById(rec.category_id)?.kind)) rec.category_id = null;
     setMain(`<div class="form-sheet">
       ${!editable ? '<div class="readonly-note">للعرض فقط — ليس لديك صلاحية التعديل. راجع المدير.</div>' : ''}
       <div class="statusbar">${TYPE_KEYS.map(k => `<button type="button" data-type="${k}" class="t-${TYPES[k].color} ${rec.tx_type === k ? 'on' : ''}" ${editable ? '' : 'disabled'}>${TYPES[k].label}</button>`).join('')}</div>
@@ -460,7 +466,7 @@ function viewForm(id, presetType) {
         <div class="fields">
           <label class="field"><span>المبلغ (${CUR})</span><input id="fAmt" class="amount-input num" inputmode="decimal" autocomplete="off" value="${rec.amount === '' ? '' : rec.amount}" placeholder="0.00" ${editable ? '' : 'disabled'} /></label>
           <label class="field"><span>التاريخ</span><input type="date" id="fDate" value="${rec.tx_date}" ${editable ? '' : 'disabled'} /></label>
-          ${rec.tx_type.startsWith('adj') ? `<label class="field"><span>البند (اختياري)</span><select id="fCatSel" ${editable ? '' : 'disabled'}><option value="">— بدون بند (تسوية الصندوق) —</option>${['expense', 'income'].map(k => catOptions(k)).join('')}</select></label>` : T.cat ? `<label class="field"><span>البند</span><select id="fCatSel" ${editable ? '' : 'disabled'}>${catOptions(T.cat) || '<option value="">— أضف بنداً من الإعدادات —</option>'}</select></label>` : '<div class="field"><span>البند</span><span class="muted">لا يلزم لهذا النوع</span></div>'}
+          ${OPTK[rec.tx_type] ? `<label class="field"><span>${rec.tx_type === 'withdrawal' ? 'الحساب (اختياري)' : 'البند (اختياري)'}</span><select id="fCatSel" ${editable ? '' : 'disabled'}><option value="">${rec.tx_type === 'withdrawal' ? '— بدون حساب (مسحوبات عامة) —' : '— بدون بند (تسوية الصندوق) —'}</option>${OPTK[rec.tx_type].map(k => catOptions(k)).join('')}</select></label>` : T.cat ? `<label class="field"><span>${T.cat === 'account' ? 'الحساب' : 'البند'}</span><select id="fCatSel" ${editable ? '' : 'disabled'}>${catOptions(T.cat) || '<option value="">— أضف بنداً من الإعدادات —</option>'}</select></label>` : '<div class="field"><span>البند</span><span class="muted">لا يلزم لهذا النوع</span></div>'}
           ${existing ? `<div class="field"><span>بواسطة</span><span>${esc(userName(rec.created_by))}</span></div>` : ''}
           <label class="field full"><span>البيان</span><textarea id="fNote" placeholder="${rec.tx_type === 'withdrawal' ? 'مثال: إيداع في البنك / سحب شخصي' : rec.tx_type.startsWith('adj') ? 'سبب التسوية' : 'وصف مختصر'}" ${editable ? '' : 'disabled'}>${esc(rec.note)}</textarea></label>
         </div>
@@ -577,7 +583,27 @@ const REPORTS = {
   bycat: 'حسب البند (شهري)',
   daily: 'الملخص اليومي',
   item: 'حركة البند',
+  ledger: 'دفتر الأستاذ',
+  trial: 'ميزان المراجعة',
 };
+/* ---------- دفتر الأستاذ (قيد مزدوج: الصندوق مقابل حساب البند) ---------- */
+const CASH = 'cash';
+const VIRT = { v_open: 'رصيد افتتاحي / رأس المال', v_adj: 'فروقات وتسويات الصندوق', v_wd: 'مسحوبات ومقبوضات عامة' };
+function counterAcc(t) {
+  if (t.category_id) return 'c' + t.category_id;
+  return t.tx_type === 'opening' ? 'v_open' : (t.tx_type === 'withdrawal' || t.tx_type === 'receipt') ? 'v_wd' : 'v_adj';
+}
+function entries(t) { const ca = counterAcc(t); return TYPES[t.tx_type].sign > 0 ? { dr: CASH, cr: ca } : { dr: ca, cr: CASH }; }
+function accName(a) { if (a === CASH) return 'الصندوق (النقدية)'; if (VIRT[a]) return VIRT[a]; return catName(Number(String(a).slice(1))) || '—'; }
+function accKind(a) { if (a === CASH) return 'نقدية'; if (VIRT[a]) return 'نظامي'; return KIND_LABEL[catById(Number(a.slice(1)))?.kind] || ''; }
+function allAccounts() { const s = new Set([CASH]); S.cats.forEach(c => s.add('c' + c.id)); S.txs.forEach(t => s.add(counterAcc(t))); return [...s]; }
+function ledgerHeader() {
+  const accs = allAccounts(), k = a => catById(Number(a.slice(1)))?.kind;
+  const grp = (label, f) => { const xs = accs.filter(f); return xs.length ? `<optgroup label="${label}">${xs.map(a => `<option value="${a}" ${a === S.rep.acc ? 'selected' : ''}>${esc(accName(a))}</option>`).join('')}</optgroup>` : ''; };
+  return `<div class="filters no-print"><label>الحساب <select id="rAcc" style="min-width:230px;font-weight:600;color:var(--text)">
+    ${grp('النقدية', a => a === CASH)}${grp('الحسابات', a => a[0] === 'c' && k(a) === 'account')}${grp('الإيرادات', a => a[0] === 'c' && k(a) === 'income')}${grp('المصروفات', a => a[0] === 'c' && k(a) === 'expense')}${grp('حسابات نظامية', a => !!VIRT[a])}
+  </select></label><span class="muted" style="font-size:12px">الرصيد الموجب = مدين، والسالب = دائن</span></div>`;
+}
 function reportData(key, from, to) {
   const rows = inRange(from, to);
   const open = balanceBefore(from);
@@ -597,7 +623,7 @@ function reportData(key, from, to) {
   if (key === 'summary') {
     const byCat = kind => S.cats.filter(c => c.kind === kind).map(c => [c.name, round2(rows.filter(t => t.category_id === c.id && t.tx_type === (kind === 'income' ? 'sale' : 'expense')).reduce((s, t) => s + t.amount, 0))]).filter(r => r[1]);
     const inc = byCat('income'), exp = byCat('expense');
-    const ti = sumType(rows, 'sale'), te = sumType(rows, 'expense'), tw = sumType(rows, 'withdrawal');
+    const ti = sumType(rows, 'sale'), te = sumType(rows, 'expense'), tw = sumType(rows, 'withdrawal'), tr = sumType(rows, 'receipt');
     const ap = sumType(rows, 'adj_plus'), am = sumType(rows, 'adj_minus'), op = sumType(rows, 'opening');
     const body = [
       { c: ['الإيرادات', ''], cls: 'section' }, ...inc.map(r => ({ c: r })), { c: ['إجمالي الإيرادات', ti], cls: 'total' },
@@ -607,8 +633,9 @@ function reportData(key, from, to) {
       { c: ['رصيد أول المدة', open] },
       ...(op ? [{ c: ['+ أرصدة افتتاحية', op] }] : []),
       { c: ['+ المبيعات', ti] }, { c: ['− المصروفات', -te] }, { c: ['− المسحوبات من النقدية', -tw] },
+      ...(tr ? [{ c: ['+ المقبوضات من الحسابات', tr] }] : []),
       { c: ['± صافي التسويات', round2(ap - am)] },
-      { c: ['رصيد آخر المدة', round2(open + op + ti - te - tw + ap - am)], cls: 'grand' },
+      { c: ['رصيد آخر المدة', round2(open + op + ti - te - tw + tr + ap - am)], cls: 'grand' },
     ];
     return { title: REPORTS.summary, head: ['البيان', `المبلغ (${CUR})`], numCols: [1], rows: body };
   }
@@ -634,6 +661,43 @@ function reportData(key, from, to) {
     ];
     return { title: REPORTS.bycat, head: ['البند', ...months.map(monthLabel), 'الإجمالي', 'النسبة'], numCols: [...months.map((_, i) => i + 1), months.length + 1], rows: body };
   }
+  if (key === 'ledger') {
+    const accs = allAccounts();
+    const acc = accs.includes(S.rep.acc) ? S.rep.acc : CASH; S.rep.acc = acc;
+    const touch = t => { const e = entries(t); return e.dr === acc || e.cr === acc; };
+    const eff = t => { const e = entries(t); return (e.dr === acc ? t.amount : 0) - (e.cr === acc ? t.amount : 0); };
+    const open = round2(S.txs.filter(t => t.tx_date < from && touch(t)).reduce((s, t) => s + eff(t), 0));
+    let run = open, td = 0, tc = 0;
+    const body = [{ c: ['', 'رصيد أول المدة', '', '', '', '', open], cls: 'opening' }];
+    rows.filter(touch).forEach(t => {
+      const e = entries(t), dr = e.dr === acc ? t.amount : '', cr = e.cr === acc ? t.amount : '';
+      run = round2(run + eff(t)); if (dr) td = round2(td + dr); if (cr) tc = round2(tc + cr);
+      body.push({ c: [t.tx_date, TYPES[t.tx_type].label + (t.note ? ' — ' + t.note : ''), accName(e.dr === acc ? e.cr : e.dr), userName(t.created_by), dr, cr, run], id: t.id });
+    });
+    return { title: `${REPORTS.ledger}: ${accName(acc)}`, head: ['التاريخ', 'البيان', 'الحساب المقابل', 'بواسطة', 'مدين', 'دائن', 'الرصيد'], numCols: [4, 5, 6], rows: body,
+      foot: ['', 'رصيد آخر المدة', '', '', td, tc, run] };
+  }
+  if (key === 'trial') {
+    const accs = allAccounts(), bal = {};
+    accs.forEach(a => bal[a] = { o: 0, d: 0, c: 0 });
+    S.txs.forEach(t => {
+      if (t.tx_date > to) return;
+      const e = entries(t);
+      if (t.tx_date < from) { bal[e.dr].o += t.amount; bal[e.cr].o -= t.amount; }
+      else { bal[e.dr].d += t.amount; bal[e.cr].c += t.amount; }
+    });
+    const ord = a => a === CASH ? -1 : VIRT[a] ? 9 : (KIND_ORDER[catById(Number(a.slice(1)))?.kind] ?? 8) + 1;
+    const list = accs.filter(a => round2(bal[a].o) || round2(bal[a].d) || round2(bal[a].c)).sort((x, y) => ord(x) - ord(y) || accName(x).localeCompare(accName(y), 'ar'));
+    const T = [0, 0, 0, 0, 0];
+    const body = list.map(a => {
+      const o = round2(bal[a].o), d = round2(bal[a].d), c = round2(bal[a].c), cl = round2(o + d - c);
+      const v = [o, d, c, cl > 0 ? cl : '', cl < 0 ? -cl : ''];
+      v.forEach((x, i) => T[i] = round2(T[i] + (Number(x) || 0)));
+      return { c: [accName(a), accKind(a), ...v], acc: a };
+    });
+    return { title: REPORTS.trial, head: ['الحساب', 'النوع', 'رصيد أول المدة', 'حركة مدين', 'حركة دائن', 'رصيد مدين', 'رصيد دائن'], numCols: [2, 3, 4, 5, 6], rows: body,
+      foot: ['الإجمالي', T[3] === T[4] ? '✓ متوازن' : '✗ غير متوازن', ...T] };
+  }
   if (key === 'item') {
     const cat = catById(Number(S.rep.cat)) || S.cats.find(c => c.kind === 'expense') || S.cats[0];
     if (!cat) return { title: REPORTS.item, head: ['—'], numCols: [], rows: [] };
@@ -651,7 +715,7 @@ function reportData(key, from, to) {
     });
     const net = isExp ? round2(tout - tin) : round2(tin - tout);
     const days = Math.max(1, Math.round((new Date(to + 'T00:00:00') - new Date(from + 'T00:00:00')) / 864e5) + 1);
-    const kindTotal = sumType(rows, isExp ? 'expense' : 'sale');
+    const kindTotal = cat.kind === 'account' ? 0 : sumType(rows, isExp ? 'expense' : 'sale');
     const pFrom = addDays(from, -days), pTo = addDays(from, -1);
     const pl = inRange(pFrom, pTo).filter(of).reduce((s, t) => s + signed(t), 0);
     const prev = round2(isExp ? -pl : pl);
@@ -665,25 +729,25 @@ function reportData(key, from, to) {
     const body = [{ c: ['رصيد أول المدة', '', '', '', '', '', open], cls: 'opening' }];
     days.forEach(d => {
       const r = rows.filter(t => t.tx_date === d);
-      const s = sumType(r, 'sale') + sumType(r, 'opening'), e = sumType(r, 'expense'), w = sumType(r, 'withdrawal');
+      const s = sumType(r, 'sale') + sumType(r, 'opening'), e = sumType(r, 'expense'), w = round2(sumType(r, 'withdrawal') - sumType(r, 'receipt'));
       const a = round2(sumType(r, 'adj_plus') - sumType(r, 'adj_minus')), net = round2(s - e - w + a);
       run = round2(run + net);
       [s, e, w, a, net].forEach((v, i) => tot[i] = round2(tot[i] + v));
       body.push({ c: [d, s, e, w, a, net, run] });
     });
-    return { title: REPORTS.daily, head: ['اليوم', 'مبيعات (+افتتاحي)', 'مصروفات', 'مسحوبات', 'تسويات ±', 'صافي اليوم', 'رصيد الصندوق'], numCols: [1, 2, 3, 4, 5, 6],
+    return { title: REPORTS.daily, head: ['اليوم', 'مبيعات (+افتتاحي)', 'مصروفات', 'مسحوبات − مقبوضات', 'تسويات ±', 'صافي اليوم', 'رصيد الصندوق'], numCols: [1, 2, 3, 4, 5, 6],
       rows: body, foot: ['الإجمالي', ...tot, run] };
   }
 }
 function renderReport(R) {
   const cell = (v, i) => R.numCols.includes(i) ? `<td class="num">${v === '' || v == null ? '' : (typeof v === 'number' ? `<span class="${v < 0 ? 'neg' : ''}">${fmt(v)}</span>` : esc(v))}</td>` : `<td>${esc(v)}</td>`;
   return `<div class="table-wrap"><table class="list"><thead><tr>${R.head.map((h, i) => `<th class="${R.numCols.includes(i) ? 'num' : ''}">${esc(h)}</th>`).join('')}</tr></thead>
-    <tbody>${R.rows.length ? R.rows.map(r => `<tr class="${r.cls || ''} ${r.id ? 'click' : ''}" ${r.id ? `data-id="${r.id}"` : ''}>${r.c.map(cell).join('')}</tr>`).join('') : `<tr><td colspan="${R.head.length}" class="empty">لا توجد بيانات</td></tr>`}</tbody>
+    <tbody>${R.rows.length ? R.rows.map(r => `<tr class="${r.cls || ''} ${r.id || r.acc ? 'click' : ''}" ${r.id ? `data-id="${r.id}"` : ''} ${r.acc ? `data-acc="${r.acc}" title="عرض دفتر الأستاذ"` : ''}>${r.c.map(cell).join('')}</tr>`).join('') : `<tr><td colspan="${R.head.length}" class="empty">لا توجد بيانات</td></tr>`}</tbody>
     ${R.foot ? `<tfoot><tr>${R.foot.map(cell).join('')}</tr></tfoot>` : ''}</table></div>`;
 }
 function itemHeader(R) {
   const st = R.stats;
-  const opts = ['expense', 'income'].map(kind => `<optgroup label="${kind === 'expense' ? 'المصروفات' : 'الإيرادات'}">${S.cats.filter(c => c.kind === kind).map(c => `<option value="${c.id}" ${String(c.id) === S.rep.cat ? 'selected' : ''}>${esc(c.name)}${c.active ? '' : ' (موقوف)'}</option>`).join('')}</optgroup>`).join('');
+  const opts = ['expense', 'income', 'account'].map(kind => `<optgroup label="${{ expense: 'المصروفات', income: 'الإيرادات', account: 'الحسابات' }[kind]}">${S.cats.filter(c => c.kind === kind).map(c => `<option value="${c.id}" ${String(c.id) === S.rep.cat ? 'selected' : ''}>${esc(c.name)}${c.active ? '' : ' (موقوف)'}</option>`).join('')}</optgroup>`).join('');
   const sel = `<div class="filters no-print"><label>البند <select id="rCat" style="min-width:200px;font-weight:600;color:var(--text)">${opts}</select></label></div>`;
   if (!st) return sel;
   const diff = round2(st.total - st.prev), pct = st.prev ? round2(diff / st.prev * 100) : null, up = diff > 0;
@@ -723,7 +787,7 @@ function viewReports(key) {
   setMain(`<div class="tabs">${Object.entries(REPORTS).map(([k, t]) => `<a href="#/reports/${k}" class="${k === key ? 'on' : ''}">${t}</a>`).join('')}</div>
     <div class="filters">${presets.map(([t, a, b]) => `<span class="chip ${r.from === a && r.to === b ? 'on' : ''}" data-a="${a}" data-b="${b}">${t}</span>`).join('')}</div>
     <div class="report-head"><h2>${esc(APP)} — ${esc(R.title)}</h2><div>الفترة من ${r.from} إلى ${r.to} — العملة: ${CUR}</div><div style="font-size:11px">طُبع في ${dt(new Date().toISOString())} بواسطة ${esc(S.me.full_name)}</div></div>
-    ${key === 'item' ? itemHeader(R) : ''}
+    ${key === 'item' ? itemHeader(R) : ''}${key === 'ledger' ? ledgerHeader() : ''}${key === 'trial' ? '<div class="help no-print">ميزان المراجعة حتى نهاية الفترة. اضغط على أي حساب لفتح دفتر الأستاذ الخاص به.</div>' : ''}
     ${renderReport(R)}`);
   if (key === 'item') drawItemChart(R, r.to);
   bindRowClicks();
@@ -732,6 +796,8 @@ function viewReports(key) {
   $('#rTo').onchange = e => { r.to = e.target.value || r.to; if (r.to < r.from) r.from = r.to; go(); };
   $$('.chip[data-a]').forEach(c => c.onclick = () => { r.from = c.dataset.a; r.to = c.dataset.b; go(); });
   $('#rCat') && ($('#rCat').onchange = e => { r.cat = e.target.value; go(); });
+  $('#rAcc') && ($('#rAcc').onchange = e => { r.acc = e.target.value; go(); });
+  $$('tr[data-acc]').forEach(tr => tr.onclick = () => { r.acc = tr.dataset.acc; location.hash = '#/reports/ledger'; });
   $('#rPrint').onclick = () => window.print();
   $('#rXls').onclick = () => exportXLSX(R.title, [{ title: `${R.title} — من ${r.from} إلى ${r.to}`, head: R.head, rows: [...R.rows.map(x => x.c), ...(R.foot ? [R.foot] : [])] }]);
 }
@@ -760,8 +826,8 @@ function viewCategories() {
   const admin = can('cats');
   setCP(`<div class="cp-left">${crumb([{ t: 'الإعدادات' }, { t: 'البنود' }])}${admin ? '<button class="btn btn-primary" id="catNew">جديد</button>' : ''}</div>`);
   const used = id => S.txs.filter(t => t.category_id === id).length;
-  const kindLabel = { income: 'إيراد', expense: 'مصروف' };
-  const rows = [...S.cats].sort((a, b) => (a.kind === b.kind ? 0 : a.kind === 'income' ? -1 : 1) || a.sort - b.sort || a.id - b.id);
+  const kindLabel = KIND_LABEL;
+  const rows = [...S.cats].sort((a, b) => (KIND_ORDER[a.kind] - KIND_ORDER[b.kind]) || a.sort - b.sort || a.id - b.id);
   setMain(`${admin ? '<div class="help">عدّل الاسم مباشرة في الجدول وسيُحفظ تلقائياً. البند المستخدم في حركات لا يُحذف، ويمكنك إيقافه فيختفي من قوائم الإدخال وتبقى حركاته السابقة.</div>' : '<div class="help">ليس لديك صلاحية إدارة البنود — راجع المدير.</div>'}
     <div class="table-wrap"><table class="list"><thead><tr><th style="width:70px">الترتيب</th><th>اسم البند</th><th style="width:130px">النوع</th><th class="num" style="width:100px">عدد الحركات</th><th style="width:80px">نشط</th><th style="width:60px"></th></tr></thead>
     <tbody>${rows.map(c => `<tr data-cid="${c.id}">
@@ -791,7 +857,7 @@ function viewCategories() {
   $('#catNew').onclick = async () => {
     $('#modalCard').innerHTML = `<div class="m-h">بند جديد</div><div class="m-b">
       <label>الاسم<input id="nName" style="width:100%;margin-top:4px" /></label>
-      <label style="margin-top:10px">النوع<select id="nKind" style="width:100%;margin-top:4px"><option value="expense">مصروف</option><option value="income">إيراد</option></select></label></div>
+      <label style="margin-top:10px">النوع<select id="nKind" style="width:100%;margin-top:4px"><option value="expense">مصروف</option><option value="income">إيراد</option><option value="account">حساب (بنك، جاري شريك، سلف...)</option></select></label><p class="muted" style="font-size:12px;margin:8px 0 0">«حساب» يُستخدم مع حركتي «سحب من النقدية» و«قبض من حساب» ويظهر في دفتر الأستاذ.</p></div>
       <div class="m-f"><button class="btn btn-primary" id="nOk">إنشاء</button><button class="btn btn-secondary" id="nNo">إلغاء</button></div>`;
     $('#modal').classList.remove('hidden'); $('#nName').focus();
     $('#nNo').onclick = () => $('#modal').classList.add('hidden');
