@@ -169,3 +169,13 @@ end $$;
 --  الصلاحيات التفصيلية (إضافة/تعديل/حذف/البنود) تُدار من داخل التطبيق:
 --    الإعدادات ← المستخدمون (للمدير)
 -- =====================================================================
+
+
+-- ===== تحديث: قيد بين حسابين (journal) =====
+alter table public.transactions add column if not exists credit_category_id bigint references public.categories(id) on delete restrict;
+alter table public.transactions drop constraint if exists transactions_tx_type_check;
+alter table public.transactions add constraint transactions_tx_type_check
+  check (tx_type in ('sale','expense','withdrawal','adj_plus','adj_minus','opening','receipt','journal'));
+alter table public.transactions drop constraint if exists transactions_journal_check;
+alter table public.transactions add constraint transactions_journal_check
+  check (tx_type <> 'journal' or (category_id is not null and credit_category_id is not null and category_id <> credit_category_id));

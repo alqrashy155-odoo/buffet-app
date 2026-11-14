@@ -256,3 +256,8 @@ table.list{width:100%;border-collapse:collapse}
 /* توسيع خانة اسم البند لتظهر الأسماء كاملة */
 .list td input[data-f="name"]{min-width:260px;field-sizing:content;font-weight:500}
 @media (max-width:760px){.list td input[data-f="name"]{min-width:200px}}
+
+
+/* نوع «قيد بين حسابين» */
+.b-navy{background:#e8eaf6;color:#3949ab} .bd-navy{border-right-color:#3949ab}
+.statusbar button.on.t-navy{background:#3949ab}
