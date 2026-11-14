@@ -192,3 +192,9 @@ begin
 end $$;
 revoke all on function public.admin_set_password(uuid, text) from public, anon;
 grant execute on function public.admin_set_password(uuid, text) to authenticated;
+
+
+-- ===== تحديث: مجموعة البند في ميزان المراجعة (للترتيب فقط) =====
+alter table public.categories add column if not exists grp text;
+alter table public.categories drop constraint if exists categories_grp_check;
+alter table public.categories add constraint categories_grp_check check (grp is null or grp in ('asset','liability','expense','income','carried'));

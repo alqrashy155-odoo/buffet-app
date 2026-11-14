@@ -26,6 +26,10 @@ const TYPE_KEYS = Object.keys(TYPES);
 const OPTK = { withdrawal: ['account'], adj_plus: ['expense', 'income', 'account'], adj_minus: ['expense', 'income', 'account'] };
 const KIND_LABEL = { income: 'إيراد', expense: 'مصروف', account: 'حساب' };
 const KIND_ORDER = { income: 0, expense: 1, account: 2 };
+// مجموعات ميزان المراجعة — للترتيب والعرض فقط، لا تؤثر على أي عملية مالية
+const GROUPS = [['asset', 'الأصول'], ['liability', 'الخصوم'], ['expense', 'المصروفات'], ['income', 'الإيرادات'], ['carried', 'مرحّل ±']];
+const GROUP_LABEL = Object.fromEntries(GROUPS);
+const grpOf = c => (c && GROUP_LABEL[c.grp]) ? c.grp : ({ income: 'income', expense: 'expense', account: 'asset' }[c?.kind] || 'carried');
 const MONTHS = ['يناير','فبراير','مارس','أبريل','مايو','يونيو','يوليو','أغسطس','سبتمبر','أكتوبر','نوفمبر','ديسمبر'];
 const CLOSING_TAG = 'فرق جرد';
 
@@ -104,7 +108,7 @@ function supaDB() {
     },
     deleteTx: id => one(sb.from('transactions').delete().eq('id', id).select()),
     saveCategory(c) {
-      const row = { name: c.name, kind: c.kind, active: c.active, sort: c.sort };
+      const row = { name: c.name, kind: c.kind, active: c.active, sort: c.sort, grp: c.grp || null };
       return one(c.id ? sb.from('categories').update(row).eq('id', c.id).select() : sb.from('categories').insert(row).select());
     },
     deleteCategory: id => one(sb.from('categories').delete().eq('id', id).select()),
@@ -146,8 +150,8 @@ function demoDB() {
     },
     async deleteTx(id) { st.transactions = st.transactions.filter(x => x.id !== id); save(); },
     async saveCategory(c) {
-      if (c.id) { const r = st.categories.find(x => x.id === c.id); Object.assign(r, { name: c.name, kind: c.kind, active: c.active, sort: c.sort }); save(); return clone(r); }
-      const r = { id: nextId('cat'), name: c.name, kind: c.kind, active: c.active, sort: c.sort, created_at: new Date().toISOString() };
+      if (c.id) { const r = st.categories.find(x => x.id === c.id); Object.assign(r, { name: c.name, kind: c.kind, active: c.active, sort: c.sort, grp: c.grp || null }); save(); return clone(r); }
+      const r = { id: nextId('cat'), name: c.name, kind: c.kind, active: c.active, sort: c.sort, grp: c.grp || null, created_at: new Date().toISOString() };
       st.categories.push(r); save(); return clone(r);
     },
     async deleteCategory(id) {
@@ -707,11 +711,20 @@ function reportData(key, from, to) {
     const ord = a => a === CASH ? -1 : VIRT[a] ? 9 : (KIND_ORDER[catById(Number(a.slice(1)))?.kind] ?? 8) + 1;
     const list = accs.filter(a => round2(bal[a].o) || round2(bal[a].d) || round2(bal[a].c)).sort((x, y) => ord(x) - ord(y) || accName(x).localeCompare(accName(y), 'ar'));
     const T = [0, 0, 0, 0, 0];
-    const body = list.map(a => {
-      const o = round2(bal[a].o), d = round2(bal[a].d), c = round2(bal[a].c), cl = round2(o + d - c);
-      const v = [o, d, c, cl > 0 ? cl : '', cl < 0 ? -cl : ''];
-      v.forEach((x, i) => T[i] = round2(T[i] + (Number(x) || 0)));
-      return { c: [accName(a), accKind(a), ...v], acc: a };
+    const gOf = a => a === CASH ? 'asset' : VIRT[a] ? 'carried' : grpOf(catById(Number(a.slice(1))));
+    const body = [];
+    GROUPS.forEach(([g, label]) => {
+      const accsG = list.filter(a => gOf(a) === g);
+      if (!accsG.length) return;
+      const sub = [0, 0, 0, 0, 0];
+      body.push({ c: [label, '', '', '', '', '', ''], cls: 'section' });
+      accsG.forEach(a => {
+        const o = round2(bal[a].o), d = round2(bal[a].d), c = round2(bal[a].c), cl = round2(o + d - c);
+        const v = [o, d, c, cl > 0 ? cl : '', cl < 0 ? -cl : ''];
+        v.forEach((x, i) => { T[i] = round2(T[i] + (Number(x) || 0)); sub[i] = round2(sub[i] + (Number(x) || 0)); });
+        body.push({ c: [accName(a), accKind(a), ...v], acc: a });
+      });
+      body.push({ c: [`إجمالي ${label}`, '', ...sub], cls: 'total' });
     });
     return { title: REPORTS.trial, head: ['الحساب', 'النوع', 'رصيد أول المدة', 'حركة مدين', 'حركة دائن', 'رصيد مدين', 'رصيد دائن'], numCols: [2, 3, 4, 5, 6], rows: body,
       foot: ['الإجمالي', T[3] === T[4] ? '✓ متوازن' : '✗ غير متوازن', ...T] };
@@ -805,7 +818,7 @@ function viewReports(key) {
   setMain(`<div class="tabs">${Object.entries(REPORTS).map(([k, t]) => `<a href="#/reports/${k}" class="${k === key ? 'on' : ''}">${t}</a>`).join('')}</div>
     <div class="filters">${presets.map(([t, a, b]) => `<span class="chip ${r.from === a && r.to === b ? 'on' : ''}" data-a="${a}" data-b="${b}">${t}</span>`).join('')}</div>
     <div class="report-head"><h2>${esc(APP)} — ${esc(R.title)}</h2><div>الفترة من ${r.from} إلى ${r.to} — العملة: ${CUR}</div><div style="font-size:11px">طُبع في ${dt(new Date().toISOString())} بواسطة ${esc(S.me.full_name)}</div></div>
-    ${key === 'item' ? itemHeader(R) : ''}${key === 'ledger' ? ledgerHeader() : ''}${key === 'trial' ? '<div class="help no-print">ميزان المراجعة حتى نهاية الفترة. اضغط على أي حساب لفتح دفتر الأستاذ الخاص به.</div>' : ''}
+    ${key === 'item' ? itemHeader(R) : ''}${key === 'ledger' ? ledgerHeader() : ''}${key === 'trial' ? '<div class="help no-print">ميزان المراجعة حتى نهاية الفترة، مرتب حسب المجموعات (تُحدَّد من الإعدادات ← البنود). اضغط على أي حساب لفتح دفتر الأستاذ الخاص به.</div>' : ''}
     ${renderReport(R)}`);
   if (key === 'item') drawItemChart(R, r.to);
   bindRowClicks();
@@ -847,11 +860,12 @@ function viewCategories() {
   const kindLabel = KIND_LABEL;
   const rows = [...S.cats].sort((a, b) => (KIND_ORDER[a.kind] - KIND_ORDER[b.kind]) || a.sort - b.sort || a.id - b.id);
   setMain(`${admin ? '<div class="help">عدّل الاسم مباشرة في الجدول وسيُحفظ تلقائياً. البند المستخدم في حركات لا يُحذف، ويمكنك إيقافه فيختفي من قوائم الإدخال وتبقى حركاته السابقة.</div>' : '<div class="help">ليس لديك صلاحية إدارة البنود — راجع المدير.</div>'}
-    <div class="table-wrap"><table class="list"><thead><tr><th style="width:70px">الترتيب</th><th>اسم البند</th><th style="width:130px">النوع</th><th class="num" style="width:100px">عدد الحركات</th><th style="width:80px">نشط</th><th style="width:60px"></th></tr></thead>
+    <div class="table-wrap"><table class="list"><thead><tr><th style="width:70px">الترتيب</th><th>اسم البند</th><th style="width:130px">النوع</th><th style="width:130px">المجموعة <small class="muted" title="لترتيب ميزان المراجعة فقط">ⓘ</small></th><th class="num" style="width:100px">عدد الحركات</th><th style="width:80px">نشط</th><th style="width:60px"></th></tr></thead>
     <tbody>${rows.map(c => `<tr data-cid="${c.id}">
       <td><input class="inline num" type="number" data-f="sort" value="${c.sort}" ${admin ? '' : 'disabled'} style="width:60px" /></td>
       <td><input class="inline" data-f="name" value="${esc(c.name)}" ${admin ? '' : 'disabled'} /></td>
       <td><select class="inline" data-f="kind" ${admin && !used(c.id) ? '' : 'disabled'}>${Object.entries(kindLabel).map(([k, l]) => `<option value="${k}" ${c.kind === k ? 'selected' : ''}>${l}</option>`).join('')}</select></td>
+      <td><select class="inline" data-f="grp" ${admin ? '' : 'disabled'}>${GROUPS.map(([g, l]) => `<option value="${g}" ${grpOf(c) === g ? 'selected' : ''}>${l}</option>`).join('')}</select></td>
       <td class="num">${used(c.id)}</td>
       <td><label class="toggle"><input type="checkbox" data-f="active" ${c.active ? 'checked' : ''} ${admin ? '' : 'disabled'} /><span></span></label></td>
       <td>${admin && !used(c.id) ? '<button class="btn btn-link btn-sm" data-del title="حذف">🗑</button>' : ''}</td></tr>`).join('')}</tbody></table></div>`);
@@ -861,7 +875,7 @@ function viewCategories() {
     const saveRow = async () => {
       const c = { ...catById(id) };
       c.name = $('[data-f=name]', tr).value.trim(); c.kind = $('[data-f=kind]', tr).value;
-      c.sort = Number($('[data-f=sort]', tr).value) || 0; c.active = $('[data-f=active]', tr).checked;
+      c.sort = Number($('[data-f=sort]', tr).value) || 0; c.active = $('[data-f=active]', tr).checked; c.grp = $('[data-f=grp]', tr).value;
       if (!c.name) { toast('اسم البند مطلوب', 'err'); return; }
       try { await DB.saveCategory(c); await refresh(false); toast('تم حفظ البند ✓', 'ok'); } catch (e) { toast(errMsg(e), 'err'); }
     };
