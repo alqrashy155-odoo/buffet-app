@@ -451,7 +451,7 @@ function viewForm(id, presetType) {
     if (T.cat && !S.cats.some(c => c.id === rec.category_id && c.kind === T.cat)) {
       const first = S.cats.find(c => c.kind === T.cat && c.active); rec.category_id = first ? first.id : null;
     }
-    if (!T.cat) rec.category_id = null;
+    if (!T.cat && !rec.tx_type.startsWith('adj')) rec.category_id = null;
     setMain(`<div class="form-sheet">
       ${!editable ? '<div class="readonly-note">للعرض فقط — ليس لديك صلاحية التعديل. راجع المدير.</div>' : ''}
       <div class="statusbar">${TYPE_KEYS.map(k => `<button type="button" data-type="${k}" class="t-${TYPES[k].color} ${rec.tx_type === k ? 'on' : ''}" ${editable ? '' : 'disabled'}>${TYPES[k].label}</button>`).join('')}</div>
@@ -460,7 +460,7 @@ function viewForm(id, presetType) {
         <div class="fields">
           <label class="field"><span>المبلغ (${CUR})</span><input id="fAmt" class="amount-input num" inputmode="decimal" autocomplete="off" value="${rec.amount === '' ? '' : rec.amount}" placeholder="0.00" ${editable ? '' : 'disabled'} /></label>
           <label class="field"><span>التاريخ</span><input type="date" id="fDate" value="${rec.tx_date}" ${editable ? '' : 'disabled'} /></label>
-          ${T.cat ? `<label class="field"><span>البند</span><select id="fCatSel" ${editable ? '' : 'disabled'}>${catOptions(T.cat) || '<option value="">— أضف بنداً من الإعدادات —</option>'}</select></label>` : '<div class="field"><span>البند</span><span class="muted">لا يلزم لهذا النوع</span></div>'}
+          ${rec.tx_type.startsWith('adj') ? `<label class="field"><span>البند (اختياري)</span><select id="fCatSel" ${editable ? '' : 'disabled'}><option value="">— بدون بند (تسوية الصندوق) —</option>${['expense', 'income'].map(k => catOptions(k)).join('')}</select></label>` : T.cat ? `<label class="field"><span>البند</span><select id="fCatSel" ${editable ? '' : 'disabled'}>${catOptions(T.cat) || '<option value="">— أضف بنداً من الإعدادات —</option>'}</select></label>` : '<div class="field"><span>البند</span><span class="muted">لا يلزم لهذا النوع</span></div>'}
           ${existing ? `<div class="field"><span>بواسطة</span><span>${esc(userName(rec.created_by))}</span></div>` : ''}
           <label class="field full"><span>البيان</span><textarea id="fNote" placeholder="${rec.tx_type === 'withdrawal' ? 'مثال: إيداع في البنك / سحب شخصي' : rec.tx_type.startsWith('adj') ? 'سبب التسوية' : 'وصف مختصر'}" ${editable ? '' : 'disabled'}>${esc(rec.note)}</textarea></label>
         </div>
@@ -576,6 +576,7 @@ const REPORTS = {
   summary: 'ملخص الإيرادات والمصروفات',
   bycat: 'حسب البند (شهري)',
   daily: 'الملخص اليومي',
+  item: 'حركة البند',
 };
 function reportData(key, from, to) {
   const rows = inRange(from, to);
@@ -613,7 +614,7 @@ function reportData(key, from, to) {
   }
   if (key === 'bycat') {
     const months = []; for (let m = monthStart(from); m <= to; m = addMonths(m, 1)) months.push(m);
-    const cell = (c, m) => round2(rows.filter(t => t.category_id === c.id && t.tx_date.slice(0, 7) === m.slice(0, 7)).reduce((s, t) => s + t.amount, 0));
+    const cell = (c, m) => round2((c.kind === 'expense' ? -1 : 1) * rows.filter(t => t.category_id === c.id && t.tx_date.slice(0, 7) === m.slice(0, 7)).reduce((s, t) => s + signed(t), 0));
     const build = kind => {
       const cats = S.cats.filter(c => c.kind === kind);
       const lines = cats.map(c => { const v = months.map(m => cell(c, m)); return { name: c.name, v, tot: round2(v.reduce((a, b) => a + b, 0)) }; }).filter(l => l.tot);
@@ -632,6 +633,31 @@ function reportData(key, from, to) {
       { c: ['الصافي', ...months.map((_, i) => round2(I.colTot[i] - E.colTot[i])), round2(I.grand - E.grand), ''], cls: 'grand' },
     ];
     return { title: REPORTS.bycat, head: ['البند', ...months.map(monthLabel), 'الإجمالي', 'النسبة'], numCols: [...months.map((_, i) => i + 1), months.length + 1], rows: body };
+  }
+  if (key === 'item') {
+    const cat = catById(Number(S.rep.cat)) || S.cats.find(c => c.kind === 'expense') || S.cats[0];
+    if (!cat) return { title: REPORTS.item, head: ['—'], numCols: [], rows: [] };
+    S.rep.cat = String(cat.id);
+    const isExp = cat.kind === 'expense';
+    const of = t => t.category_id === cat.id;
+    const open = round2(S.txs.filter(t => of(t) && t.tx_date < from).reduce((s, t) => s + signed(t), 0));
+    const lines = rows.filter(of);
+    let run = open, tin = 0, tout = 0;
+    const body = [{ c: ['', '', 'رصيد البند قبل الفترة', '', '', '', open], cls: 'opening' }];
+    lines.forEach(t => {
+      const v = signed(t); run = round2(run + v);
+      if (v > 0) tin = round2(tin + v); else tout = round2(tout - v);
+      body.push({ c: [t.tx_date, TYPES[t.tx_type].label, t.note, userName(t.created_by), v > 0 ? t.amount : '', v < 0 ? t.amount : '', run], id: t.id });
+    });
+    const net = isExp ? round2(tout - tin) : round2(tin - tout);
+    const days = Math.max(1, Math.round((new Date(to + 'T00:00:00') - new Date(from + 'T00:00:00')) / 864e5) + 1);
+    const kindTotal = sumType(rows, isExp ? 'expense' : 'sale');
+    const pFrom = addDays(from, -days), pTo = addDays(from, -1);
+    const pl = inRange(pFrom, pTo).filter(of).reduce((s, t) => s + signed(t), 0);
+    const prev = round2(isExp ? -pl : pl);
+    return { title: `${REPORTS.item}: ${cat.name}`, head: ['التاريخ', 'النوع', 'البيان', 'بواسطة', 'داخل (+)', 'خارج (−)', 'الرصيد'], numCols: [4, 5, 6], rows: body,
+      foot: [`الإجمالي (${lines.length} حركة)`, '', 'رصيد البند آخر الفترة', '', tin, tout, run],
+      stats: { cat, total: net, tin, tout, count: lines.length, avg: lines.length ? round2(net / lines.length) : 0, perDay: round2(net / days), share: kindTotal ? round2(net / kindTotal * 100) : 0, prev, days } };
   }
   if (key === 'daily') {
     const days = [...new Set(rows.map(t => t.tx_date))].sort();
@@ -655,6 +681,33 @@ function renderReport(R) {
     <tbody>${R.rows.length ? R.rows.map(r => `<tr class="${r.cls || ''} ${r.id ? 'click' : ''}" ${r.id ? `data-id="${r.id}"` : ''}>${r.c.map(cell).join('')}</tr>`).join('') : `<tr><td colspan="${R.head.length}" class="empty">لا توجد بيانات</td></tr>`}</tbody>
     ${R.foot ? `<tfoot><tr>${R.foot.map(cell).join('')}</tr></tfoot>` : ''}</table></div>`;
 }
+function itemHeader(R) {
+  const st = R.stats;
+  const opts = ['expense', 'income'].map(kind => `<optgroup label="${kind === 'expense' ? 'المصروفات' : 'الإيرادات'}">${S.cats.filter(c => c.kind === kind).map(c => `<option value="${c.id}" ${String(c.id) === S.rep.cat ? 'selected' : ''}>${esc(c.name)}${c.active ? '' : ' (موقوف)'}</option>`).join('')}</optgroup>`).join('');
+  const sel = `<div class="filters no-print"><label>البند <select id="rCat" style="min-width:200px;font-weight:600;color:var(--text)">${opts}</select></label></div>`;
+  if (!st) return sel;
+  const diff = round2(st.total - st.prev), pct = st.prev ? round2(diff / st.prev * 100) : null, up = diff > 0;
+  const isExp = st.cat.kind === 'expense';
+  return `${sel}<div class="kpis">
+    <div class="kpi main-kpi"><div class="k-l">صافي ${isExp ? 'مصروف' : 'إيراد'} ${esc(st.cat.name)}</div><div class="k-v">${money(st.total, false)} <small class="muted">${CUR}</small></div><div class="k-s">${st.count} حركة — داخل ${fmt(st.tin)} / خارج ${fmt(st.tout)}</div></div>
+    <div class="kpi k-blue"><div class="k-l">متوسط الحركة</div><div class="k-v">${money(st.avg, false)}</div><div class="k-s">لكل عملية ${isExp ? 'شراء' : 'بيع'}</div></div>
+    <div class="kpi k-orange"><div class="k-l">المتوسط اليومي</div><div class="k-v">${money(st.perDay, false)}</div><div class="k-s">على ${st.days} يوم</div></div>
+    <div class="kpi k-green"><div class="k-l">النسبة من ${isExp ? 'المصروفات' : 'الإيرادات'}</div><div class="k-v">${st.share}%</div><div class="k-s">في نفس الفترة</div></div>
+    <div class="kpi ${up === isExp ? 'k-red' : 'k-green'}"><div class="k-l">مقارنة بالفترة السابقة</div><div class="k-v"><span class="num ${diff === 0 ? '' : (up === isExp ? 'neg' : 'pos')}">${diff > 0 ? '+' : ''}${fmt(diff)}</span></div><div class="k-s">${pct == null ? 'لا توجد بيانات سابقة' : (pct > 0 ? '+' : '') + pct + '%'} — السابقة: ${fmt(st.prev)}</div></div>
+  </div>
+  <div class="card no-print" style="margin-bottom:16px"><div class="card-h">${esc(st.cat.name)} — آخر 6 أشهر</div><div class="card-b"><div class="chart-box" style="height:220px"><canvas id="cItem"></canvas></div></div></div>`;
+}
+function drawItemChart(R, to) {
+  if (!window.Chart || !$('#cItem') || !R.stats) return;
+  const months = []; for (let i = 5; i >= 0; i--) months.push(addMonths(to, -i));
+  const k = R.stats.cat.kind === 'expense' ? -1 : 1;
+  const vals = months.map(m => round2(k * S.txs.filter(t => t.category_id === R.stats.cat.id && t.tx_date.slice(0, 7) === m.slice(0, 7)).reduce((s, t) => s + signed(t), 0)));
+  S.charts.push(new Chart($('#cItem'), {
+    type: 'bar',
+    data: { labels: months.map(monthLabel), datasets: [{ label: R.stats.cat.name, data: vals, backgroundColor: R.stats.cat.kind === 'expense' ? '#e28a7f' : '#5fb37f', borderRadius: 4 }] },
+    options: { maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { rtl: true, callbacks: { label: c => fmt(c.raw) } } }, scales: { x: { reverse: true, grid: { display: false } }, y: { beginAtZero: true, position: 'right' } } },
+  }));
+}
 function viewReports(key) {
   if (!REPORTS[key]) key = 'statement';
   const r = S.rep, td = today();
@@ -670,12 +723,15 @@ function viewReports(key) {
   setMain(`<div class="tabs">${Object.entries(REPORTS).map(([k, t]) => `<a href="#/reports/${k}" class="${k === key ? 'on' : ''}">${t}</a>`).join('')}</div>
     <div class="filters">${presets.map(([t, a, b]) => `<span class="chip ${r.from === a && r.to === b ? 'on' : ''}" data-a="${a}" data-b="${b}">${t}</span>`).join('')}</div>
     <div class="report-head"><h2>${esc(APP)} — ${esc(R.title)}</h2><div>الفترة من ${r.from} إلى ${r.to} — العملة: ${CUR}</div><div style="font-size:11px">طُبع في ${dt(new Date().toISOString())} بواسطة ${esc(S.me.full_name)}</div></div>
+    ${key === 'item' ? itemHeader(R) : ''}
     ${renderReport(R)}`);
+  if (key === 'item') drawItemChart(R, r.to);
   bindRowClicks();
   const go = () => viewReports(key);
   $('#rFrom').onchange = e => { r.from = e.target.value || r.from; if (r.from > r.to) r.to = r.from; go(); };
   $('#rTo').onchange = e => { r.to = e.target.value || r.to; if (r.to < r.from) r.from = r.to; go(); };
   $$('.chip[data-a]').forEach(c => c.onclick = () => { r.from = c.dataset.a; r.to = c.dataset.b; go(); });
+  $('#rCat') && ($('#rCat').onchange = e => { r.cat = e.target.value; go(); });
   $('#rPrint').onclick = () => window.print();
   $('#rXls').onclick = () => exportXLSX(R.title, [{ title: `${R.title} — من ${r.from} إلى ${r.to}`, head: R.head, rows: [...R.rows.map(x => x.c), ...(R.foot ? [R.foot] : [])] }]);
 }
