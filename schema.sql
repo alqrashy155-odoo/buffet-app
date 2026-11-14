@@ -198,3 +198,20 @@ grant execute on function public.admin_set_password(uuid, text) to authenticated
 alter table public.categories add column if not exists grp text;
 alter table public.categories drop constraint if exists categories_grp_check;
 alter table public.categories add constraint categories_grp_check check (grp is null or grp in ('asset','liability','expense','income','carried'));
+
+
+-- ===== تحديث: ظهور البند (كليهما / المدير / المستخدم) =====
+alter table public.categories add column if not exists vis text not null default 'both';
+alter table public.categories drop constraint if exists categories_vis_check;
+alter table public.categories add constraint categories_vis_check check (vis in ('both','admin','user'));
+create or replace function public.cat_allowed(cat bigint)
+returns boolean language sql stable security definer set search_path = public as $$
+  select cat is null or public.is_admin() or not exists (select 1 from public.categories c where c.id = cat and c.vis = 'admin');
+$$;
+drop policy if exists p_tx_insert on public.transactions;
+drop policy if exists p_tx_update on public.transactions;
+create policy p_tx_insert on public.transactions for insert to authenticated
+  with check (created_by = auth.uid() and public.has_perm('add') and public.cat_allowed(category_id) and public.cat_allowed(credit_category_id));
+create policy p_tx_update on public.transactions for update to authenticated
+  using (public.has_perm('edit'))
+  with check (public.has_perm('edit') and public.cat_allowed(category_id) and public.cat_allowed(credit_category_id));

@@ -29,6 +29,9 @@ const KIND_ORDER = { income: 0, expense: 1, account: 2 };
 // مجموعات ميزان المراجعة — للترتيب والعرض فقط، لا تؤثر على أي عملية مالية
 const GROUPS = [['asset', 'الأصول'], ['liability', 'الخصوم'], ['expense', 'المصروفات'], ['income', 'الإيرادات'], ['carried', 'مرحّل ±']];
 const GROUP_LABEL = Object.fromEntries(GROUPS);
+// ظهور البند: كليهما / المدير فقط / المستخدم — المدير يرى كل البنود دائماً
+const VIS = [['both', 'كليهما'], ['admin', 'المدير'], ['user', 'المستخدم']];
+const canSeeCat = c => !!c && (S.me?.role === 'admin' || (c.vis || 'both') !== 'admin');
 const grpOf = c => (c && GROUP_LABEL[c.grp]) ? c.grp : ({ income: 'income', expense: 'expense', account: 'asset' }[c?.kind] || 'carried');
 const MONTHS = ['يناير','فبراير','مارس','أبريل','مايو','يونيو','يوليو','أغسطس','سبتمبر','أكتوبر','نوفمبر','ديسمبر'];
 const CLOSING_TAG = 'فرق جرد';
@@ -108,7 +111,7 @@ function supaDB() {
     },
     deleteTx: id => one(sb.from('transactions').delete().eq('id', id).select()),
     saveCategory(c) {
-      const row = { name: c.name, kind: c.kind, active: c.active, sort: c.sort, grp: c.grp || null };
+      const row = { name: c.name, kind: c.kind, active: c.active, sort: c.sort, grp: c.grp || null, vis: c.vis || 'both' };
       return one(c.id ? sb.from('categories').update(row).eq('id', c.id).select() : sb.from('categories').insert(row).select());
     },
     deleteCategory: id => one(sb.from('categories').delete().eq('id', id).select()),
@@ -150,8 +153,8 @@ function demoDB() {
     },
     async deleteTx(id) { st.transactions = st.transactions.filter(x => x.id !== id); save(); },
     async saveCategory(c) {
-      if (c.id) { const r = st.categories.find(x => x.id === c.id); Object.assign(r, { name: c.name, kind: c.kind, active: c.active, sort: c.sort, grp: c.grp || null }); save(); return clone(r); }
-      const r = { id: nextId('cat'), name: c.name, kind: c.kind, active: c.active, sort: c.sort, grp: c.grp || null, created_at: new Date().toISOString() };
+      if (c.id) { const r = st.categories.find(x => x.id === c.id); Object.assign(r, { name: c.name, kind: c.kind, active: c.active, sort: c.sort, grp: c.grp || null, vis: c.vis || 'both' }); save(); return clone(r); }
+      const r = { id: nextId('cat'), name: c.name, kind: c.kind, active: c.active, sort: c.sort, grp: c.grp || null, vis: c.vis || 'both', created_at: new Date().toISOString() };
       st.categories.push(r); save(); return clone(r);
     },
     async deleteCategory(id) {
@@ -458,18 +461,18 @@ function viewForm(id, presetType) {
       ${existing && can('delete') ? '<button class="btn btn-danger" id="fDel">حذف</button>' : ''}</div>`);
 
   const catOptions = kind => {
-    const list = S.cats.filter(c => c.kind === kind && (c.active || c.id === rec.category_id));
+    const list = S.cats.filter(c => c.kind === kind && ((c.active && canSeeCat(c)) || c.id === rec.category_id));
     return list.map(c => `<option value="${c.id}" ${c.id === rec.category_id ? 'selected' : ''}>${esc(c.name)}${c.active ? '' : ' (موقوف)'}</option>`).join('');
   };
 
-  const allCatOptions = sel => ['expense', 'income', 'account'].map(k => { const l = S.cats.filter(c => c.kind === k && (c.active || c.id === sel)); return l.length ? `<optgroup label="${{ expense: 'المصروفات', income: 'الإيرادات', account: 'الحسابات' }[k]}">${l.map(c => `<option value="${c.id}" ${c.id === sel ? 'selected' : ''}>${esc(c.name)}${c.active ? '' : ' (موقوف)'}</option>`).join('')}</optgroup>` : ''; }).join('');
+  const allCatOptions = sel => ['expense', 'income', 'account'].map(k => { const l = S.cats.filter(c => c.kind === k && ((c.active && canSeeCat(c)) || c.id === sel)); return l.length ? `<optgroup label="${{ expense: 'المصروفات', income: 'الإيرادات', account: 'الحسابات' }[k]}">${l.map(c => `<option value="${c.id}" ${c.id === sel ? 'selected' : ''}>${esc(c.name)}${c.active ? '' : ' (موقوف)'}</option>`).join('')}</optgroup>` : ''; }).join('');
   const jFields = () => `<label class="field"><span>الحساب المدين</span><select id="fCatSel" ${editable ? '' : 'disabled'}><option value="">— اختر —</option>${allCatOptions(rec.category_id)}</select></label>
           <label class="field"><span>الحساب الدائن</span><select id="fCrSel" ${editable ? '' : 'disabled'}><option value="">— اختر —</option>${allCatOptions(rec.credit_category_id)}</select></label>
           <div class="field full"><span></span><span class="muted" style="font-size:12px;line-height:1.7;font-weight:400">المدين = الحساب الذي يُحمَّل بالمبلغ، والدائن = الحساب الذي يُدفع منه.<br>مثال سداد بند من حساب: مدين «خضروات وفواكه» / دائن «البنك». مثال تسوية: مدين «جاري ياسين» / دائن «جاري محمد».</span></div>`;
   const draw = () => {
     const T = TYPES[rec.tx_type];
-    if (T.cat && !S.cats.some(c => c.id === rec.category_id && c.kind === T.cat)) {
-      const first = S.cats.find(c => c.kind === T.cat && c.active); rec.category_id = first ? first.id : null;
+    if (T.cat && !S.cats.some(c => c.id === rec.category_id && c.kind === T.cat && (canSeeCat(c) || existing))) {
+      const first = S.cats.find(c => c.kind === T.cat && c.active && canSeeCat(c)); rec.category_id = first ? first.id : null;
     }
     if (!T.cat && !OPTK[rec.tx_type] && rec.tx_type !== 'journal') rec.category_id = null;
     if (rec.tx_type !== 'journal') rec.credit_category_id = null;
@@ -860,12 +863,13 @@ function viewCategories() {
   const kindLabel = KIND_LABEL;
   const rows = [...S.cats].sort((a, b) => (KIND_ORDER[a.kind] - KIND_ORDER[b.kind]) || a.sort - b.sort || a.id - b.id);
   setMain(`${admin ? '<div class="help">عدّل الاسم مباشرة في الجدول وسيُحفظ تلقائياً. البند المستخدم في حركات لا يُحذف، ويمكنك إيقافه فيختفي من قوائم الإدخال وتبقى حركاته السابقة.</div>' : '<div class="help">ليس لديك صلاحية إدارة البنود — راجع المدير.</div>'}
-    <div class="table-wrap"><table class="list"><thead><tr><th style="width:70px">الترتيب</th><th>اسم البند</th><th style="width:130px">النوع</th><th style="width:130px">المجموعة <small class="muted" title="لترتيب ميزان المراجعة فقط">ⓘ</small></th><th class="num" style="width:100px">عدد الحركات</th><th style="width:80px">نشط</th><th style="width:60px"></th></tr></thead>
+    <div class="table-wrap"><table class="list"><thead><tr><th style="width:70px">الترتيب</th><th>اسم البند</th><th style="width:130px">النوع</th><th style="width:130px">المجموعة <small class="muted" title="لترتيب ميزان المراجعة فقط">ⓘ</small></th><th style="width:120px">يظهر لـ <small class="muted" title="البند الخاص بالمدير لا يظهر للمستخدم في الإدخال ولا يستطيع القيد عليه">ⓘ</small></th><th class="num" style="width:100px">عدد الحركات</th><th style="width:80px">نشط</th><th style="width:60px"></th></tr></thead>
     <tbody>${rows.map(c => `<tr data-cid="${c.id}">
       <td><input class="inline num" type="number" data-f="sort" value="${c.sort}" ${admin ? '' : 'disabled'} style="width:60px" /></td>
       <td><input class="inline" data-f="name" value="${esc(c.name)}" ${admin ? '' : 'disabled'} /></td>
       <td><select class="inline" data-f="kind" ${admin && !used(c.id) ? '' : 'disabled'}>${Object.entries(kindLabel).map(([k, l]) => `<option value="${k}" ${c.kind === k ? 'selected' : ''}>${l}</option>`).join('')}</select></td>
       <td><select class="inline" data-f="grp" ${admin ? '' : 'disabled'}>${GROUPS.map(([g, l]) => `<option value="${g}" ${grpOf(c) === g ? 'selected' : ''}>${l}</option>`).join('')}</select></td>
+      <td><select class="inline" data-f="vis" ${admin ? '' : 'disabled'}>${VIS.map(([v, l]) => `<option value="${v}" ${(c.vis || 'both') === v ? 'selected' : ''}>${l}</option>`).join('')}</select></td>
       <td class="num">${used(c.id)}</td>
       <td><label class="toggle"><input type="checkbox" data-f="active" ${c.active ? 'checked' : ''} ${admin ? '' : 'disabled'} /><span></span></label></td>
       <td>${admin && !used(c.id) ? '<button class="btn btn-link btn-sm" data-del title="حذف">🗑</button>' : ''}</td></tr>`).join('')}</tbody></table></div>`);
@@ -875,7 +879,7 @@ function viewCategories() {
     const saveRow = async () => {
       const c = { ...catById(id) };
       c.name = $('[data-f=name]', tr).value.trim(); c.kind = $('[data-f=kind]', tr).value;
-      c.sort = Number($('[data-f=sort]', tr).value) || 0; c.active = $('[data-f=active]', tr).checked; c.grp = $('[data-f=grp]', tr).value;
+      c.sort = Number($('[data-f=sort]', tr).value) || 0; c.active = $('[data-f=active]', tr).checked; c.grp = $('[data-f=grp]', tr).value; c.vis = $('[data-f=vis]', tr).value;
       if (!c.name) { toast('اسم البند مطلوب', 'err'); return; }
       try { await DB.saveCategory(c); await refresh(false); toast('تم حفظ البند ✓', 'ok'); } catch (e) { toast(errMsg(e), 'err'); }
     };
