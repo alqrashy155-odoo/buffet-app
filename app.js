@@ -9,6 +9,8 @@ const CFG = window.APP_CONFIG || {};
 const DEMO = !CFG.SUPABASE_URL || !CFG.SUPABASE_ANON_KEY;
 const CUR = CFG.CURRENCY || 'ر.س';
 const APP = CFG.APP_NAME || 'البوفية';
+// بداية يوم العمل: الحركات قبل هذه الساعة تُحسب لليوم السابق
+const DAY_START = Math.min(23, Math.max(0, Number(CFG.DAY_START_HOUR ?? 8)));
 
 // أنواع الحركات وأثرها على الصندوق
 const TYPES = {
@@ -45,7 +47,8 @@ const fmt = n => Number(n || 0).toLocaleString('en-US', { minimumFractionDigits:
 const money = (n, cls = true) => `<span class="num ${cls ? (n < 0 ? 'neg' : n > 0 ? 'pos' : '') : ''}">${fmt(n)}</span>`;
 const pad = n => String(n).padStart(2, '0');
 const ymd = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-const today = () => ymd(new Date());
+// تاريخ يوم العمل الحالي (قبل ساعة البداية = اليوم السابق)
+const today = () => { const d = new Date(); if (d.getHours() < DAY_START) d.setDate(d.getDate() - 1); return ymd(d); };
 const addDays = (s, n) => { const d = new Date(s + 'T00:00:00'); d.setDate(d.getDate() + n); return ymd(d); };
 const monthStart = s => s.slice(0, 8) + '01';
 const monthEnd = s => { const d = new Date(s.slice(0, 7) + '-01T00:00:00'); d.setMonth(d.getMonth() + 1); d.setDate(0); return ymd(d); };
@@ -228,7 +231,8 @@ const signed = t => TYPES[t.tx_type].sign * t.amount;
 const txHour = t => (t.tx_hour === 0 || t.tx_hour) ? Number(t.tx_hour) : (t.created_at ? new Date(t.created_at).getHours() : 0);
 const hourLabel = h => `${h % 12 === 0 ? 12 : h % 12} ${h < 12 ? 'ص' : 'م'}`;
 const when = t => `${t.tx_date}  ${hourLabel(txHour(t))}`;
-const txCmp = (a, b) => a.tx_date.localeCompare(b.tx_date) || txHour(a) - txHour(b) || a.id - b.id;
+const hk = h => (h - DAY_START + 24) % 24; // ترتيب الساعة داخل يوم العمل
+const txCmp = (a, b) => a.tx_date.localeCompare(b.tx_date) || hk(txHour(a)) - hk(txHour(b)) || a.id - b.id;
 // أثر الحركة على بند معيّن (موجب = داخل، سالب = خارج) — يشمل قيود الحسابين
 const catEff = (t, id) => t.tx_type === 'journal' ? (t.credit_category_id === id ? t.amount : 0) - (t.category_id === id ? t.amount : 0) : (t.category_id === id ? signed(t) : 0);
 const touchesCat = (t, id) => t.category_id === id || t.credit_category_id === id;
@@ -489,7 +493,7 @@ function viewForm(id, presetType) {
         <div class="sheet-title">${typeBadge(rec.tx_type)} <span>${T.sign > 0 ? 'يُضاف إلى الصندوق' : T.sign < 0 ? 'يُخصم من الصندوق' : 'قيد بين حسابين — لا يؤثر على الصندوق'}</span></div>
         <div class="fields">
           <label class="field"><span>المبلغ (${CUR})</span><input id="fAmt" class="amount-input num" inputmode="decimal" autocomplete="off" value="${rec.amount === '' ? '' : rec.amount}" placeholder="0.00" ${editable ? '' : 'disabled'} /></label>
-          <label class="field"><span>التاريخ والساعة</span><div style="display:flex;gap:8px"><input type="date" id="fDate" value="${rec.tx_date}" ${editable ? '' : 'disabled'} style="flex:1" /><select id="fHour" ${editable ? '' : 'disabled'} style="width:90px">${Array.from({ length: 24 }, (_, h) => `<option value="${h}" ${txHour(rec) === h ? 'selected' : ''}>${hourLabel(h)}</option>`).join('')}</select></div></label>
+          <label class="field"><span>التاريخ والساعة</span><div style="display:flex;gap:8px"><input type="date" id="fDate" value="${rec.tx_date}" ${editable ? '' : 'disabled'} style="flex:1" /><select id="fHour" ${editable ? '' : 'disabled'} style="width:175px">${Array.from({ length: 24 }, (_, i) => (i + DAY_START) % 24).map(h => `<option value="${h}" ${txHour(rec) === h ? 'selected' : ''}>${hourLabel(h)}${h < DAY_START ? ' (بعد منتصف الليل)' : ''}</option>`).join('')}</select></div></label>
           ${rec.tx_type === 'journal' ? jFields() : OPTK[rec.tx_type] ? `<label class="field"><span>${rec.tx_type === 'withdrawal' ? 'الحساب (اختياري)' : 'البند (اختياري)'}</span><select id="fCatSel" ${editable ? '' : 'disabled'}><option value="">${rec.tx_type === 'withdrawal' ? '— بدون حساب (مسحوبات عامة) —' : '— بدون بند (تسوية الصندوق) —'}</option>${OPTK[rec.tx_type].map(k => catOptions(k)).join('')}</select></label>` : T.cat ? `<label class="field"><span>${T.cat === 'account' ? 'الحساب' : 'البند'}</span><select id="fCatSel" ${editable ? '' : 'disabled'}>${catOptions(T.cat) || '<option value="">— أضف بنداً من الإعدادات —</option>'}</select></label>` : '<div class="field"><span>البند</span><span class="muted">لا يلزم لهذا النوع</span></div>'}
           ${existing ? `<div class="field"><span>بواسطة</span><span>${esc(userName(rec.created_by))}</span></div>` : ''}
           <label class="field full"><span>البيان</span><textarea id="fNote" placeholder="${rec.tx_type === 'withdrawal' ? 'مثال: إيداع في البنك / سحب شخصي' : rec.tx_type.startsWith('adj') ? 'سبب التسوية' : 'وصف مختصر'}" ${editable ? '' : 'disabled'}>${esc(rec.note)}</textarea></label>
@@ -548,7 +552,7 @@ function viewClosing() {
   let date = today();
   setCP(`<div class="cp-left">${crumb([{ t: 'الإقفال اليومي' }])}</div>`);
   const past = S.txs.filter(t => t.tx_type.startsWith('adj') && t.note.startsWith(CLOSING_TAG)).sort((a, b) => txCmp(b, a)).slice(0, 15);
-  setMain(`${can('add') ? '' : '<div class="readonly-note" style="margin-bottom:12px">ليس لديك صلاحية الإضافة، لذلك لا يمكنك تسجيل الإقفال.</div>'}<div class="help">عُدّ النقدية الموجودة فعلاً في الصندوق، وسيقارنها التطبيق بالرصيد الدفتري. إذا وُجد فرق يُسجَّل تلقائياً كحركة <b>تسوية +</b> أو <b>تسوية −</b> حتى يتطابق الرصيد.</div>
+  setMain(`${can('add') ? '' : '<div class="readonly-note" style="margin-bottom:12px">ليس لديك صلاحية الإضافة، لذلك لا يمكنك تسجيل الإقفال.</div>'}<div class="help">يوم العمل يبدأ ${hourLabel(DAY_START)} وينتهي قبلها من صباح اليوم التالي، فالإقفال بعد منتصف الليل يُحسب لليوم السابق تلقائياً.<br>عُدّ النقدية الموجودة فعلاً في الصندوق، وسيقارنها التطبيق بالرصيد الدفتري. إذا وُجد فرق يُسجَّل تلقائياً كحركة <b>تسوية +</b> أو <b>تسوية −</b> حتى يتطابق الرصيد.</div>
     <div class="grid g-2">
       <div class="card"><div class="card-h">جرد النقدية <label style="display:flex;gap:6px;align-items:center;font-weight:400">التاريخ <input type="date" id="cDate" value="${date}" /></label></div>
         <div class="card-b">
