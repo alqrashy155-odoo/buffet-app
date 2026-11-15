@@ -215,3 +215,9 @@ create policy p_tx_insert on public.transactions for insert to authenticated
 create policy p_tx_update on public.transactions for update to authenticated
   using (public.has_perm('edit'))
   with check (public.has_perm('edit') and public.cat_allowed(category_id) and public.cat_allowed(credit_category_id));
+
+
+-- ===== تحديث: ساعة العملية (0-23) =====
+alter table public.transactions add column if not exists tx_hour smallint;
+alter table public.transactions drop constraint if exists transactions_tx_hour_check;
+alter table public.transactions add constraint transactions_tx_hour_check check (tx_hour is null or tx_hour between 0 and 23);

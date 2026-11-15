@@ -106,7 +106,7 @@ function supaDB() {
     categories: () => all('categories', 'sort'),
     transactions: () => all('transactions', 'tx_date'),
     saveTx(t) {
-      const row = { tx_date: t.tx_date, tx_type: t.tx_type, category_id: t.category_id || null, credit_category_id: t.tx_type === 'journal' ? (t.credit_category_id || null) : null, amount: t.amount, note: t.note || '' };
+      const row = { tx_date: t.tx_date, tx_type: t.tx_type, category_id: t.category_id || null, credit_category_id: t.tx_type === 'journal' ? (t.credit_category_id || null) : null, amount: t.amount, tx_hour: (t.tx_hour === 0 || t.tx_hour) ? Number(t.tx_hour) : null, note: t.note || '' };
       return one(t.id ? sb.from('transactions').update(row).eq('id', t.id).select() : sb.from('transactions').insert(row).select());
     },
     deleteTx: id => one(sb.from('transactions').delete().eq('id', id).select()),
@@ -147,8 +147,8 @@ function demoDB() {
     async transactions() { return clone(st.transactions).sort((a, b) => a.tx_date.localeCompare(b.tx_date) || a.id - b.id); },
     async saveTx(t) {
       const now = new Date().toISOString();
-      if (t.id) { const r = st.transactions.find(x => x.id === t.id); Object.assign(r, { tx_date: t.tx_date, tx_type: t.tx_type, category_id: t.category_id || null, credit_category_id: t.tx_type === 'journal' ? (t.credit_category_id || null) : null, amount: t.amount, note: t.note || '', updated_at: now }); save(); return clone(r); }
-      const r = { id: nextId('tx'), tx_date: t.tx_date, tx_type: t.tx_type, category_id: t.category_id || null, credit_category_id: t.tx_type === 'journal' ? (t.credit_category_id || null) : null, amount: t.amount, note: t.note || '', created_by: ME.id, created_at: now, updated_at: now };
+      if (t.id) { const r = st.transactions.find(x => x.id === t.id); Object.assign(r, { tx_date: t.tx_date, tx_type: t.tx_type, category_id: t.category_id || null, credit_category_id: t.tx_type === 'journal' ? (t.credit_category_id || null) : null, amount: t.amount, tx_hour: (t.tx_hour === 0 || t.tx_hour) ? Number(t.tx_hour) : null, note: t.note || '', updated_at: now }); save(); return clone(r); }
+      const r = { id: nextId('tx'), tx_date: t.tx_date, tx_type: t.tx_type, category_id: t.category_id || null, credit_category_id: t.tx_type === 'journal' ? (t.credit_category_id || null) : null, amount: t.amount, tx_hour: (t.tx_hour === 0 || t.tx_hour) ? Number(t.tx_hour) : null, note: t.note || '', created_by: ME.id, created_at: now, updated_at: now };
       st.transactions.push(r); save(); return clone(r);
     },
     async deleteTx(id) { st.transactions = st.transactions.filter(x => x.id !== id); save(); },
@@ -211,7 +211,7 @@ async function loadAll() {
   const [p, c, t] = await Promise.all([DB.profiles(), DB.categories(), DB.transactions()]);
   S.profiles = p;
   S.cats = c;
-  S.txs = t.map(x => ({ ...x, amount: Number(x.amount), category_id: x.category_id == null ? null : Number(x.category_id), credit_category_id: x.credit_category_id == null ? null : Number(x.credit_category_id) }));
+  S.txs = t.map(x => ({ ...x, amount: Number(x.amount), category_id: x.category_id == null ? null : Number(x.category_id), credit_category_id: x.credit_category_id == null ? null : Number(x.credit_category_id) })).sort(txCmp);
   S.me = S.profiles.find(x => x.id === S.user.id) || { id: S.user.id, full_name: S.user.email, role: 'member' };
   $('#fab') && $('#fab').classList.toggle('hidden', !can('add'));
 }
@@ -224,6 +224,11 @@ const catById = id => S.cats.find(c => c.id === id);
 const catName = id => catById(id)?.name || '';
 const userName = id => S.profiles.find(p => p.id === id)?.full_name || '—';
 const signed = t => TYPES[t.tx_type].sign * t.amount;
+// ساعة العملية (0–23) — للحركات القديمة تؤخذ من وقت الإدخال
+const txHour = t => (t.tx_hour === 0 || t.tx_hour) ? Number(t.tx_hour) : (t.created_at ? new Date(t.created_at).getHours() : 0);
+const hourLabel = h => `${h % 12 === 0 ? 12 : h % 12} ${h < 12 ? 'ص' : 'م'}`;
+const when = t => `${t.tx_date}  ${hourLabel(txHour(t))}`;
+const txCmp = (a, b) => a.tx_date.localeCompare(b.tx_date) || txHour(a) - txHour(b) || a.id - b.id;
 // أثر الحركة على بند معيّن (موجب = داخل، سالب = خارج) — يشمل قيود الحسابين
 const catEff = (t, id) => t.tx_type === 'journal' ? (t.credit_category_id === id ? t.amount : 0) - (t.category_id === id ? t.amount : 0) : (t.category_id === id ? signed(t) : 0);
 const touchesCat = (t, id) => t.category_id === id || t.credit_category_id === id;
@@ -288,7 +293,7 @@ function viewDashboard() {
       ${isCurrent ? '' : '<button class="btn btn-link btn-sm" id="mNow">الشهر الحالي</button>'}
     </div></div>`);
 
-  const recent = [...S.txs].sort((a, b) => b.tx_date.localeCompare(a.tx_date) || b.id - a.id).slice(0, 8);
+  const recent = [...S.txs].sort((a, b) => txCmp(b, a)).slice(0, 8);
   const byCat = {};
   monthTx.filter(t => t.tx_type === 'expense').forEach(t => { const n = catName(t.category_id) || 'بدون بند'; byCat[n] = (byCat[n] || 0) + t.amount; });
 
@@ -359,7 +364,7 @@ function txTable(rows, withFoot = true) {
   return `<div class="table-wrap"><table class="list"><thead><tr>
     <th>التاريخ</th><th>النوع</th><th>البند</th><th>البيان</th><th class="hide-m">بواسطة</th><th class="num">داخل</th><th class="num">خارج</th></tr></thead><tbody>
     ${rows.map(t => `<tr class="click" data-id="${t.id}">
-      <td class="num" style="text-align:right">${t.tx_date}</td><td>${typeBadge(t.tx_type)}</td>
+      <td class="num" style="text-align:right;white-space:nowrap">${t.tx_date} <small class="muted">${hourLabel(txHour(t))}</small></td><td>${typeBadge(t.tx_type)}</td>
       <td>${t.tx_type === 'journal' ? esc(jLabel(t)) : (esc(catName(t.category_id)) || '<span class="muted">—</span>')}</td>
       <td>${esc(t.note)}</td><td class="hide-m">${esc(userName(t.created_by))}</td>
       <td class="num pos">${TYPES[t.tx_type].sign > 0 ? fmt(t.amount) : TYPES[t.tx_type].sign === 0 ? '<span class="muted">⇄ ' + fmt(t.amount) + '</span>' : ''}</td>
@@ -378,7 +383,7 @@ function filteredTx() {
     (!f.user || t.created_by === f.user) &&
     (!f.from || t.tx_date >= f.from) && (!f.to || t.tx_date <= f.to) &&
     (!q || [t.note, catName(t.category_id), catName(t.credit_category_id), userName(t.created_by), TYPES[t.tx_type].label, String(t.amount)].join(' ').toLowerCase().includes(q))
-  ).sort((a, b) => b.tx_date.localeCompare(a.tx_date) || b.id - a.id);
+  ).sort((a, b) => txCmp(b, a));
 }
 function viewTransactions() {
   const f = S.list;
@@ -412,7 +417,7 @@ function viewTransactions() {
         <div class="k-top">${typeBadge(t.tx_type)}<span class="k-amt ${TYPES[t.tx_type].sign < 0 ? 'neg' : TYPES[t.tx_type].sign > 0 ? 'pos' : ''} num">${TYPES[t.tx_type].sign < 0 ? '−' : TYPES[t.tx_type].sign > 0 ? '+' : '⇄ '}${fmt(t.amount)}</span></div>
         <div style="font-weight:600;margin-top:6px">${t.tx_type === 'journal' ? esc(jLabel(t)) : (esc(catName(t.category_id)) || '&nbsp;')}</div>
         <div class="k-note">${esc(t.note) || '&nbsp;'}</div>
-        <div class="k-foot"><span>${t.tx_date}</span><span class="avatar" title="${esc(userName(t.created_by))}">${esc(initials(userName(t.created_by)))}</span></div></div>`).join('')}</div>` : '<div class="empty">لا توجد حركات مطابقة</div>';
+        <div class="k-foot"><span>${t.tx_date} · ${hourLabel(txHour(t))}</span><span class="avatar" title="${esc(userName(t.created_by))}">${esc(initials(userName(t.created_by)))}</span></div></div>`).join('')}</div>` : '<div class="empty">لا توجد حركات مطابقة</div>';
       // إجمالي أسفل البطاقات
       const tin = round2(rows.filter(t => TYPES[t.tx_type].sign > 0).reduce((s, t) => s + t.amount, 0));
       const tout = round2(rows.filter(t => TYPES[t.tx_type].sign < 0).reduce((s, t) => s + t.amount, 0));
@@ -438,7 +443,7 @@ function viewTransactions() {
     exportXLSX('الحركات', [{
       title: 'سجل الحركات',
       head: ['التاريخ', 'النوع', 'البند', 'البيان', 'بواسطة', 'داخل', 'خارج'],
-      rows: rows.map(t => [t.tx_date, TYPES[t.tx_type].label, t.tx_type === 'journal' ? jLabel(t) + ' (' + fmt(t.amount) + ')' : catName(t.category_id), t.note, userName(t.created_by),
+      rows: rows.map(t => [when(t), TYPES[t.tx_type].label, t.tx_type === 'journal' ? jLabel(t) + ' (' + fmt(t.amount) + ')' : catName(t.category_id), t.note, userName(t.created_by),
         TYPES[t.tx_type].sign > 0 ? t.amount : '', TYPES[t.tx_type].sign < 0 ? t.amount : '']),
     }]);
   };
@@ -450,7 +455,7 @@ function viewForm(id, presetType) {
   if (id && !existing) { setCP(crumb([{ t: 'الحركات', href: '#/transactions' }, { t: 'غير موجودة' }])); setMain('<div class="empty">الحركة غير موجودة أو حُذفت</div>'); return; }
   if (!existing && !can('add')) { setCP(crumb([{ t: 'الحركات', href: '#/transactions' }, { t: 'جديد' }])); setMain('<div class="empty">ليس لديك صلاحية إضافة حركات — راجع المدير</div>'); return; }
   const editable = !existing || canEdit(existing);
-  const rec = existing ? { ...existing } : { tx_date: today(), tx_type: TYPES[presetType] ? presetType : 'sale', category_id: null, credit_category_id: null, amount: '', note: '' };
+  const rec = existing ? { ...existing } : { tx_date: today(), tx_type: TYPES[presetType] ? presetType : 'sale', category_id: null, credit_category_id: null, tx_hour: new Date().getHours(), amount: '', note: '' };
   const title = existing ? `${TYPES[rec.tx_type].label} #${rec.id}` : 'جديد';
 
   setCP(`<div class="cp-left">${crumb([{ t: 'الحركات', href: '#/transactions' }, { t: title }])}
@@ -484,7 +489,7 @@ function viewForm(id, presetType) {
         <div class="sheet-title">${typeBadge(rec.tx_type)} <span>${T.sign > 0 ? 'يُضاف إلى الصندوق' : T.sign < 0 ? 'يُخصم من الصندوق' : 'قيد بين حسابين — لا يؤثر على الصندوق'}</span></div>
         <div class="fields">
           <label class="field"><span>المبلغ (${CUR})</span><input id="fAmt" class="amount-input num" inputmode="decimal" autocomplete="off" value="${rec.amount === '' ? '' : rec.amount}" placeholder="0.00" ${editable ? '' : 'disabled'} /></label>
-          <label class="field"><span>التاريخ</span><input type="date" id="fDate" value="${rec.tx_date}" ${editable ? '' : 'disabled'} /></label>
+          <label class="field"><span>التاريخ والساعة</span><div style="display:flex;gap:8px"><input type="date" id="fDate" value="${rec.tx_date}" ${editable ? '' : 'disabled'} style="flex:1" /><select id="fHour" ${editable ? '' : 'disabled'} style="width:90px">${Array.from({ length: 24 }, (_, h) => `<option value="${h}" ${txHour(rec) === h ? 'selected' : ''}>${hourLabel(h)}</option>`).join('')}</select></div></label>
           ${rec.tx_type === 'journal' ? jFields() : OPTK[rec.tx_type] ? `<label class="field"><span>${rec.tx_type === 'withdrawal' ? 'الحساب (اختياري)' : 'البند (اختياري)'}</span><select id="fCatSel" ${editable ? '' : 'disabled'}><option value="">${rec.tx_type === 'withdrawal' ? '— بدون حساب (مسحوبات عامة) —' : '— بدون بند (تسوية الصندوق) —'}</option>${OPTK[rec.tx_type].map(k => catOptions(k)).join('')}</select></label>` : T.cat ? `<label class="field"><span>${T.cat === 'account' ? 'الحساب' : 'البند'}</span><select id="fCatSel" ${editable ? '' : 'disabled'}>${catOptions(T.cat) || '<option value="">— أضف بنداً من الإعدادات —</option>'}</select></label>` : '<div class="field"><span>البند</span><span class="muted">لا يلزم لهذا النوع</span></div>'}
           ${existing ? `<div class="field"><span>بواسطة</span><span>${esc(userName(rec.created_by))}</span></div>` : ''}
           <label class="field full"><span>البيان</span><textarea id="fNote" placeholder="${rec.tx_type === 'withdrawal' ? 'مثال: إيداع في البنك / سحب شخصي' : rec.tx_type.startsWith('adj') ? 'سبب التسوية' : 'وصف مختصر'}" ${editable ? '' : 'disabled'}>${esc(rec.note)}</textarea></label>
@@ -501,6 +506,7 @@ function viewForm(id, presetType) {
     if (!editable) return;
     rec.amount = $('#fAmt').value.replace(/[٠-٩]/g, d => '٠١٢٣٤٥٦٧٨٩'.indexOf(d)).replace(/[,،\s]/g, '').replace('٫', '.');
     rec.tx_date = $('#fDate').value;
+    if ($('#fHour')) rec.tx_hour = Number($('#fHour').value);
     rec.note = $('#fNote').value.trim();
     if ($('#fCatSel')) rec.category_id = $('#fCatSel').value ? Number($('#fCatSel').value) : null;
     if ($('#fCrSel')) rec.credit_category_id = $('#fCrSel').value ? Number($('#fCrSel').value) : null;
@@ -541,7 +547,7 @@ const DENOMS = [500, 200, 100, 50, 20, 10, 5, 1];
 function viewClosing() {
   let date = today();
   setCP(`<div class="cp-left">${crumb([{ t: 'الإقفال اليومي' }])}</div>`);
-  const past = S.txs.filter(t => t.tx_type.startsWith('adj') && t.note.startsWith(CLOSING_TAG)).sort((a, b) => b.tx_date.localeCompare(a.tx_date) || b.id - a.id).slice(0, 15);
+  const past = S.txs.filter(t => t.tx_type.startsWith('adj') && t.note.startsWith(CLOSING_TAG)).sort((a, b) => txCmp(b, a)).slice(0, 15);
   setMain(`${can('add') ? '' : '<div class="readonly-note" style="margin-bottom:12px">ليس لديك صلاحية الإضافة، لذلك لا يمكنك تسجيل الإقفال.</div>'}<div class="help">عُدّ النقدية الموجودة فعلاً في الصندوق، وسيقارنها التطبيق بالرصيد الدفتري. إذا وُجد فرق يُسجَّل تلقائياً كحركة <b>تسوية +</b> أو <b>تسوية −</b> حتى يتطابق الرصيد.</div>
     <div class="grid g-2">
       <div class="card"><div class="card-h">جرد النقدية <label style="display:flex;gap:6px;align-items:center;font-weight:400">التاريخ <input type="date" id="cDate" value="${date}" /></label></div>
@@ -636,7 +642,7 @@ function reportData(key, from, to) {
     const body = [{ c: ['', '', '', 'رصيد أول المدة', '', '', '', open], cls: 'opening' }];
     rows.filter(t => TYPES[t.tx_type].sign !== 0).forEach(t => {
       run = round2(run + signed(t));
-      body.push({ c: [t.tx_date, TYPES[t.tx_type].label, catName(t.category_id), t.note, userName(t.created_by),
+      body.push({ c: [when(t), TYPES[t.tx_type].label, catName(t.category_id), t.note, userName(t.created_by),
         TYPES[t.tx_type].sign > 0 ? t.amount : '', TYPES[t.tx_type].sign < 0 ? t.amount : '', run], id: t.id });
     });
     const tin = round2(rows.filter(t => TYPES[t.tx_type].sign > 0).reduce((s, t) => s + t.amount, 0));
@@ -697,7 +703,7 @@ function reportData(key, from, to) {
     rows.filter(touch).forEach(t => {
       const e = entries(t), dr = e.dr === acc ? t.amount : '', cr = e.cr === acc ? t.amount : '';
       run = round2(run + eff(t)); if (dr) td = round2(td + dr); if (cr) tc = round2(tc + cr);
-      body.push({ c: [t.tx_date, TYPES[t.tx_type].label + (t.note ? ' — ' + t.note : ''), accName(e.dr === acc ? e.cr : e.dr), userName(t.created_by), dr, cr, run], id: t.id });
+      body.push({ c: [when(t), TYPES[t.tx_type].label + (t.note ? ' — ' + t.note : ''), accName(e.dr === acc ? e.cr : e.dr), userName(t.created_by), dr, cr, run], id: t.id });
     });
     return { title: `${REPORTS.ledger}: ${accName(acc)}`, head: ['التاريخ', 'البيان', 'الحساب المقابل', 'بواسطة', 'مدين', 'دائن', 'الرصيد'], numCols: [4, 5, 6], rows: body,
       foot: ['', 'رصيد آخر المدة', '', '', td, tc, run] };
@@ -745,7 +751,7 @@ function reportData(key, from, to) {
     lines.forEach(t => {
       const v = catEff(t, cat.id); run = round2(run + v);
       if (v > 0) tin = round2(tin + v); else tout = round2(tout - v);
-      body.push({ c: [t.tx_date, TYPES[t.tx_type].label, t.note, userName(t.created_by), v > 0 ? t.amount : '', v < 0 ? t.amount : '', run], id: t.id });
+      body.push({ c: [when(t), TYPES[t.tx_type].label, t.note, userName(t.created_by), v > 0 ? t.amount : '', v < 0 ? t.amount : '', run], id: t.id });
     });
     const net = isExp ? round2(tout - tin) : round2(tin - tout);
     const days = Math.max(1, Math.round((new Date(to + 'T00:00:00') - new Date(from + 'T00:00:00')) / 864e5) + 1);
