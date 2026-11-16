@@ -310,9 +310,10 @@ function viewDashboard() {
     </div>`}
     <div class="kpis">
       <div class="kpi main-kpi"><div class="k-l">رصيد الصندوق الآن</div><div class="k-v">${money(bal, false)} <small class="muted">${CUR}</small></div><div class="k-s">جميع الحركات حتى اليوم</div></div>
-      <div class="kpi k-green"><div class="k-l">مبيعات اليوم</div><div class="k-v">${money(sumType(todayTx, 'sale'), false)}</div><div class="k-s">مصروف اليوم: ${fmt(sumType(todayTx, 'expense'))}</div></div>
-      <div class="kpi k-blue"><div class="k-l">مبيعات ${MONTHS[Number(m0.slice(5, 7)) - 1]}</div><div class="k-v">${money(sales, false)}</div><div class="k-s">${monthTx.filter(t => t.tx_type === 'sale').length} حركة</div></div>
-      <div class="kpi k-red"><div class="k-l">مصروفات الشهر</div><div class="k-v">${money(exp, false)}</div><div class="k-s">صافي الشهر: <b class="${sales - exp < 0 ? 'neg' : 'pos'}">${fmt(sales - exp)}</b></div></div>
+      <div class="kpi k-green"><div class="k-l">مبيعات اليوم</div><div class="k-v">${money(sumType(todayTx, 'sale'), false)}</div><div class="k-s">${todayTx.filter(t => t.tx_type === 'sale').length} حركة — ${td}</div></div>
+      <div class="kpi k-red"><div class="k-l">مصاريف اليوم</div><div class="k-v">${money(sumType(todayTx, 'expense'), false)}</div><div class="k-s">${todayTx.filter(t => t.tx_type === 'expense').length} حركة — صافي اليوم: <b class="${sumType(todayTx, 'sale') - sumType(todayTx, 'expense') < 0 ? 'neg' : 'pos'}">${fmt(sumType(todayTx, 'sale') - sumType(todayTx, 'expense'))}</b></div></div>
+      <div class="kpi k-blue"><div class="k-l">مبيعات الشهر</div><div class="k-v">${money(sales, false)}</div><div class="k-s">${monthTx.filter(t => t.tx_type === 'sale').length} حركة</div></div>
+      <div class="kpi k-red"><div class="k-l">مصاريف الشهر</div><div class="k-v">${money(exp, false)}</div><div class="k-s">صافي الشهر: <b class="${sales - exp < 0 ? 'neg' : 'pos'}">${fmt(sales - exp)}</b></div></div>
       <div class="kpi k-orange"><div class="k-l">مسحوبات الشهر</div><div class="k-v">${money(wd, false)}</div><div class="k-s">من النقدية</div></div>
     </div>
     <div class="grid g-3">
