@@ -297,7 +297,6 @@ function viewDashboard() {
       ${isCurrent ? '' : '<button class="btn btn-link btn-sm" id="mNow">الشهر الحالي</button>'}
     </div></div>`);
 
-  const recent = [...S.txs].sort((a, b) => txCmp(b, a)).slice(0, 8);
   const byCat = {};
   monthTx.filter(t => t.tx_type === 'expense').forEach(t => { const n = catName(t.category_id) || 'بدون بند'; byCat[n] = (byCat[n] || 0) + t.amount; });
 
@@ -316,18 +315,34 @@ function viewDashboard() {
       <div class="kpi k-red"><div class="k-l">مصاريف الشهر</div><div class="k-v">${money(exp, false)}</div><div class="k-s">صافي الشهر: <b class="${sales - exp < 0 ? 'neg' : 'pos'}">${fmt(sales - exp)}</b></div></div>
       <div class="kpi k-orange"><div class="k-l">مسحوبات الشهر</div><div class="k-v">${money(wd, false)}</div><div class="k-s">من النقدية</div></div>
     </div>
+    <div class="card" style="margin-bottom:16px"><div class="card-h" style="flex-wrap:wrap"><span>حركات اليوم</span>
+      <div class="pager"><button id="dPrev" title="اليوم السابق">›</button><b id="dLbl" style="color:var(--text);min-width:170px;text-align:center"></b><button id="dNext" title="اليوم التالي">‹</button><button class="btn btn-link btn-sm" id="dNow">اليوم</button></div>
+      <a class="btn btn-link btn-sm" href="#/transactions">عرض الكل</a></div>
+      <div id="dayBox"></div></div>
     <div class="grid g-3">
       <div class="card"><div class="card-h">الحركة النقدية اليومية — ${monthLabel(m0)}<a class="btn btn-link btn-sm" href="#/reports/daily">التفاصيل</a></div><div class="card-b"><div class="chart-box"><canvas id="cFlow"></canvas></div></div></div>
       <div class="card"><div class="card-h">المصروفات حسب البند<a class="btn btn-link btn-sm" href="#/reports/bycat">التفاصيل</a></div><div class="card-b"><div class="chart-box">${Object.keys(byCat).length ? '<canvas id="cCat"></canvas>' : '<div class="empty">لا توجد مصروفات هذا الشهر</div>'}</div></div></div>
     </div>
-    <div class="card" style="margin-top:16px"><div class="card-h">آخر الحركات<a class="btn btn-link btn-sm" href="#/transactions">عرض الكل</a></div>
-      ${txTable(recent, false)}
-    </div>`);
+    `);
 
   $('#mPrev').onclick = () => { S.dashMonth = addMonths(m0, -1); viewDashboard(); };
   $('#mNext').onclick = () => { S.dashMonth = addMonths(m0, 1); viewDashboard(); };
   $('#mNow') && ($('#mNow').onclick = () => { S.dashMonth = monthStart(td); viewDashboard(); });
-  bindRowClicks();
+  // حركات يوم واحد مع التنقل بين الأيام
+  const DAYS = ['الأحد', 'الاثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة', 'السبت'];
+  if (!S.dashDay || S.dashDay > td) S.dashDay = td;
+  const drawDay = () => {
+    const d = S.dashDay, rows = S.txs.filter(t => t.tx_date === d).sort(txCmp);
+    $('#dLbl').textContent = `${DAYS[new Date(d + 'T00:00:00').getDay()]} ${d}${d === td ? ' (اليوم)' : ''}`;
+    $('#dNext').disabled = d >= td;
+    $('#dNow').classList.toggle('hidden', d === td);
+    $('#dayBox').innerHTML = txTable(rows, true) + (rows.length ? `<div class="muted" style="padding:8px 12px;font-size:13px">رصيد الصندوق نهاية اليوم: <b class="num" style="color:var(--text)">${fmt(balanceUntil(d))}</b></div>` : '');
+    bindRowClicks($('#dayBox'));
+  };
+  $('#dPrev').onclick = () => { S.dashDay = addDays(S.dashDay, -1); drawDay(); };
+  $('#dNext').onclick = () => { if (S.dashDay < td) { S.dashDay = addDays(S.dashDay, 1); drawDay(); } };
+  $('#dNow').onclick = () => { S.dashDay = td; drawDay(); };
+  drawDay();
 
   if (!window.Chart) return;
   Chart.defaults.font.family = '"IBM Plex Sans Arabic", Tahoma, sans-serif';
