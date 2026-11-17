@@ -221,3 +221,7 @@ create policy p_tx_update on public.transactions for update to authenticated
 alter table public.transactions add column if not exists tx_hour smallint;
 alter table public.transactions drop constraint if exists transactions_tx_hour_check;
 alter table public.transactions add constraint transactions_tx_hour_check check (tx_hour is null or tx_hour between 0 and 23);
+
+
+-- ===== تحديث: منع تكرار اسم البند =====
+create unique index if not exists categories_name_unique on public.categories (lower(regexp_replace(btrim(name), '\s+', ' ', 'g')));

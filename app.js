@@ -34,6 +34,9 @@ const GROUP_LABEL = Object.fromEntries(GROUPS);
 // ظهور البند: كليهما / المدير فقط / المستخدم — المدير يرى كل البنود دائماً
 const VIS = [['both', 'كليهما'], ['admin', 'المدير'], ['user', 'المستخدم']];
 const canSeeCat = c => !!c && (S.me?.role === 'admin' || (c.vis || 'both') !== 'admin');
+// منع تكرار اسم البند (يتجاهل المسافات الزائدة)
+const normName = s => String(s || '').trim().replace(/\s+/g, ' ').toLowerCase();
+const nameTaken = (name, exceptId) => S.cats.some(c => c.id !== exceptId && normName(c.name) === normName(name));
 const grpOf = c => (c && GROUP_LABEL[c.grp]) ? c.grp : ({ income: 'income', expense: 'expense', account: 'asset' }[c?.kind] || 'carried');
 const MONTHS = ['يناير','فبراير','مارس','أبريل','مايو','يونيو','يوليو','أغسطس','سبتمبر','أكتوبر','نوفمبر','ديسمبر'];
 const CLOSING_TAG = 'فرق جرد';
@@ -79,6 +82,7 @@ function errMsg(e) {
   const m = (e && (e.message || e.error_description)) || String(e);
   if (/Invalid login/i.test(m)) return 'البريد أو كلمة المرور غير صحيحة';
   if (/row-level security|permission|PGRST116|NO_PERMISSION/i.test(m)) return 'ليس لديك صلاحية لهذه العملية';
+  if (/categories_name_unique|duplicate key/i.test(m)) return 'يوجد بند بنفس الاسم مسبقاً — اختر اسماً آخر';
   if (/foreign key|violates/i.test(m)) return 'لا يمكن الحذف: البند مستخدم في حركات — يمكنك إيقافه بدلاً من ذلك';
   if (/Failed to fetch|NetworkError/i.test(m)) return 'تعذر الاتصال بالخادم — تحقق من الإنترنت';
   return m;
@@ -907,6 +911,7 @@ function viewCategories() {
       c.name = $('[data-f=name]', tr).value.trim(); c.kind = $('[data-f=kind]', tr).value;
       c.sort = Number($('[data-f=sort]', tr).value) || 0; c.active = $('[data-f=active]', tr).checked; c.grp = $('[data-f=grp]', tr).value; c.vis = $('[data-f=vis]', tr).value;
       if (!c.name) { toast('اسم البند مطلوب', 'err'); return; }
+      if (nameTaken(c.name, c.id)) { toast('يوجد بند بنفس الاسم مسبقاً — اختر اسماً آخر', 'err'); $('[data-f=name]', tr).value = catById(id).name; return; }
       try { await DB.saveCategory(c); await refresh(false); toast('تم حفظ البند ✓', 'ok'); } catch (e) { toast(errMsg(e), 'err'); }
     };
     $$('[data-f]', tr).forEach(el => el.addEventListener('change', saveRow));
@@ -924,11 +929,13 @@ function viewCategories() {
     $('#modal').classList.remove('hidden'); $('#nName').focus();
     $('#nNo').onclick = () => $('#modal').classList.add('hidden');
     $('#nOk').onclick = async () => {
-      const name = $('#nName').value.trim(); if (!name) { $('#nName').focus(); return; }
+      const name = $('#nName').value.trim().replace(/\s+/g, ' '); if (!name) { $('#nName').focus(); return; }
+      if (nameTaken(name)) { toast('يوجد بند بنفس الاسم مسبقاً — اختر اسماً آخر', 'err'); $('#nName').focus(); return; }
+      if ($('#nOk').disabled) return; $('#nOk').disabled = true;
       const kind = $('#nKind').value;
       const sort = Math.max(0, ...S.cats.filter(c => c.kind === kind).map(c => c.sort)) + 10;
       try { await DB.saveCategory({ name, kind, sort, active: true }); $('#modal').classList.add('hidden'); await refresh(false); viewCategories(); toast('تمت إضافة البند ✓', 'ok'); }
-      catch (e) { toast(errMsg(e), 'err'); }
+      catch (e) { $('#nOk').disabled = false; toast(errMsg(e), 'err'); }
     };
   };
 }
