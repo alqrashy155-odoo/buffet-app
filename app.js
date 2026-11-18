@@ -335,12 +335,29 @@ function viewDashboard() {
   // حركات يوم واحد مع التنقل بين الأيام
   const DAYS = ['الأحد', 'الاثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة', 'السبت'];
   if (!S.dashDay || S.dashDay > td) S.dashDay = td;
+  // جدول حركات اليوم: التاريخ بدون ساعة، والبيان في آخر عمود
+  const dayTable = rows => {
+    if (!rows.length) return '<div class="empty">لا توجد حركات في هذا اليوم</div>';
+    const tin = round2(rows.filter(t => TYPES[t.tx_type].sign > 0).reduce((s, t) => s + t.amount, 0));
+    const tout = round2(rows.filter(t => TYPES[t.tx_type].sign < 0).reduce((s, t) => s + t.amount, 0));
+    return `<div class="table-wrap"><table class="list"><thead><tr>
+      <th>التاريخ</th><th style="width:1%;white-space:nowrap;padding-inline:6px">النوع</th><th>البند</th><th class="hide-m">بواسطة</th><th class="num">داخل</th><th class="num">خارج</th><th>البيان</th></tr></thead><tbody>
+      ${rows.map(t => `<tr class="click" data-id="${t.id}">
+        <td class="num" style="text-align:right;white-space:nowrap">${t.tx_date}</td><td style="width:1%;white-space:nowrap;padding-inline:6px">${typeBadge(t.tx_type)}</td>
+        <td>${t.tx_type === 'journal' ? esc(jLabel(t)) : (esc(catName(t.category_id)) || '<span class="muted">—</span>')}</td>
+        <td class="hide-m">${esc(userName(t.created_by))}</td>
+        <td class="num pos">${TYPES[t.tx_type].sign > 0 ? fmt(t.amount) : TYPES[t.tx_type].sign === 0 ? '<span class="muted">⇄ ' + fmt(t.amount) + '</span>' : ''}</td>
+        <td class="num neg">${TYPES[t.tx_type].sign < 0 ? fmt(t.amount) : ''}</td>
+        <td>${esc(t.note)}</td></tr>`).join('')}
+      </tbody><tfoot><tr><td colspan="3">الإجمالي — الصافي: <span class="num ${tin - tout < 0 ? 'neg' : 'pos'}">${fmt(tin - tout)}</span></td><td class="hide-m"></td>
+        <td class="num">${fmt(tin)}</td><td class="num">${fmt(tout)}</td><td></td></tr></tfoot></table></div>`;
+  };
   const drawDay = () => {
     const d = S.dashDay, rows = S.txs.filter(t => t.tx_date === d).sort(txCmp);
     $('#dLbl').textContent = `${DAYS[new Date(d + 'T00:00:00').getDay()]} ${d}${d === td ? ' (اليوم)' : ''}`;
     $('#dNext').disabled = d >= td;
     $('#dNow').classList.toggle('hidden', d === td);
-    $('#dayBox').innerHTML = txTable(rows, true) + (rows.length ? `<div class="muted" style="padding:8px 12px;font-size:13px">رصيد الصندوق نهاية اليوم: <b class="num" style="color:var(--text)">${fmt(balanceUntil(d))}</b></div>` : '');
+    $('#dayBox').innerHTML = dayTable(rows) + (rows.length ? `<div class="muted" style="padding:8px 12px;font-size:13px">رصيد الصندوق نهاية اليوم: <b class="num" style="color:var(--text)">${fmt(balanceUntil(d))}</b></div>` : '');
     bindRowClicks($('#dayBox'));
   };
   $('#dPrev').onclick = () => { S.dashDay = addDays(S.dashDay, -1); drawDay(); };
